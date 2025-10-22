@@ -1,13 +1,3 @@
-// File: index.ts
-// Package name hint: @babbage/go
-// Single-file, ESM, strict TypeScript.
-// Implements the BRC-100 WalletInterface and wraps a base WalletInterface (default WalletClient).
-// UX: 
-//  - If the wallet isn’t connected/available, show a sleek modal and link to GetMetanet.com.
-//  - If createAction fails with INSUFFICIENT_FUNDS, show Buy Sats (opens satoshis.babbage.systems) → Retry.
-// Dev monetization:
-//  - Optional devIdentity/devFeeSats. We add a concise label (BRC-100 labels allow freeform strings) to CreateActionArgs.labels.
-
 import {
   WalletClient,
   type WalletInterface,
@@ -97,7 +87,7 @@ type ResolvedOptions = {
 const DEFAULT_WALLET_UNAVAILABLE: Required<WalletUnavailableModalOptions> = {
   title: 'This action requires a BRC-100 wallet',
   message:
-    'Connect a BRC-100 compatible wallet (MetaNet). Install one, then return to retry.',
+    'Connect a BRC-100 compatible wallet (Metanet). Install one, then return to retry.',
   ctaText: 'Get a Wallet',
   ctaHref: 'https://GetMetanet.com',
 }
@@ -348,7 +338,9 @@ export default class BabbageGo implements WalletInterface {
   async createAction(args: CreateActionArgs, origin?: Origin): Promise<CreateActionResult> {
     const withMonetization = this.decorateMonetizationLabel(args)
     try {
-      return await this.base.createAction(withMonetization, origin)
+      const result = await this.base.createAction(withMonetization, origin)
+      // TODO: Submit a copy of the action to the developer with Message Box Client
+      return result
     } catch (e) {
       this.maybeShowConnectionModal(e)
 
@@ -377,20 +369,10 @@ export default class BabbageGo implements WalletInterface {
     }
   }
 
-  // We use BRC-100 labels as a safe carrier for dev monetization hints.
-  // Labels are freeform strings (LabelStringUnder300Bytes). Wallets that care can parse; others will ignore.
   private decorateMonetizationLabel(args: CreateActionArgs): CreateActionArgs {
-    const { developerIdentity, developerFeeSats } = this.options.monetization
-    if (!developerIdentity && !(developerFeeSats && developerFeeSats > 0)) {
-      return args
-    }
-    const tag = `dev:${developerIdentity || '-'}:${developerFeeSats || 0}`
-    const next: CreateActionArgs = { ...args, labels: Array.isArray(args.labels) ? [...args.labels] : [] }
-    // ensure label stays within 300 bytes — these strings are tiny; still, guard:
-    if (new TextEncoder().encode(tag).length <= 300) {
-      next.labels!.push(tag)
-    }
-    return next
+    // TODO: Monetize with additional outputs
+    // ... BRC29, derivationPrefix, derivationSuffix, senderIdentityKey, etc.
+    return args
   }
 
   // ----- Straight pass-throughs with connection-modal-on-error behavior -----
