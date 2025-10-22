@@ -1,6 +1,6 @@
 {
   "name": "@babbage/go",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A polished, production-minded BRC-100 WalletInterface wrapper with sleek funding & onboarding UX for the MetaNet/BRC-100 world.",
   "keywords": [
     "babbage",
