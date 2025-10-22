@@ -1,0 +1,46 @@
+{
+  "name": "@babbage/go",
+  "version": "0.1.0",
+  "description": "A polished, production-minded BRC-100 WalletInterface wrapper with sleek funding & onboarding UX for the MetaNet/BRC-100 world.",
+  "keywords": [
+    "babbage",
+    "brc100",
+    "metanet",
+    "wallet",
+    "bsv",
+    "sdk",
+    "web3"
+  ],
+  "license": "SEE LICENSE IN LICENSE.txt",
+  "author": "Project Babbage",
+  "type": "module",
+  "sideEffects": false,
+  "main": "dist/cjs/index.cjs",
+  "module": "dist/esm/index.js",
+  "types": "dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE.txt"
+  ],
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build:esm": "tsc -p tsconfig.esm.json",
+    "build:cjs": "tsc -p tsconfig.cjs.json && node scripts/rename-to-cjs.mjs",
+    "types": "tsc -p tsconfig.types.json",
+    "build": "npm run clean && npm run build:esm && npm run build:cjs && npm run types"
+  },
+  "peerDependencies": {
+    "@bsv/sdk": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
