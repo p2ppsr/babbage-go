@@ -36,6 +36,22 @@ const ERR = {
   WALLET_LOCKED: 'WALLET_LOCKED',
 } as const
 
+const NO_WALLET_MESSAGE_PATTERN = /no wallet(?: available| detected| found)?(?: over any communication substrate)?\.?.*install.*wallet/i
+const INSUFFICIENT_FUNDS_MESSAGE_PATTERN = /insufficient\s+funds/i
+
+function getErrorMessage(error: unknown): string {
+  if (
+    error &&
+    typeof error === 'object' &&
+    'message' in error &&
+    typeof (error as { message?: unknown }).message === 'string'
+  ) {
+    return (error as { message: string }).message
+  }
+  if (typeof error === 'string') return error
+  return String(error ?? '')
+}
+
 // Environment guard
 const IN_BROWSER =
   typeof window === 'object' &&
@@ -323,7 +339,13 @@ export default class BabbageGo implements WalletInterface {
   private maybeShowConnectionModal(error: unknown) {
     if (!IN_BROWSER || !this.options.showModal) return
     const code = (error && typeof error === 'object' && 'code' in error) ? String((error as { code?: string }).code) : ''
-    if (code === ERR.WALLET_NOT_CONNECTED || code === ERR.AUTHENTICATION_FAILED || code === ERR.WALLET_LOCKED) {
+    const message = getErrorMessage(error)
+    const indicatesNoWallet =
+      code === ERR.WALLET_NOT_CONNECTED ||
+      code === ERR.AUTHENTICATION_FAILED ||
+      code === ERR.WALLET_LOCKED ||
+      NO_WALLET_MESSAGE_PATTERN.test(message)
+    if (indicatesNoWallet) {
       const o = this.options.walletUnavailable
       showWalletUnavailableModal({
         title: o.title ?? DEFAULTS.walletUnavailable.title,
@@ -346,7 +368,10 @@ export default class BabbageGo implements WalletInterface {
 
       // Funding flow (only for INSUFFICIENT_FUNDS)
       const code = (e && typeof e === 'object' && 'code' in e) ? String((e as { code?: string }).code) : ''
-      if (IN_BROWSER && this.options.showModal && code === ERR.INSUFFICIENT_FUNDS) {
+      const message = getErrorMessage(e)
+      const insufficientFundsDetected =
+        code === ERR.INSUFFICIENT_FUNDS || INSUFFICIENT_FUNDS_MESSAGE_PATTERN.test(message)
+      if (IN_BROWSER && this.options.showModal && insufficientFundsDetected) {
         const choice = await showFundingModal(
           {
             title: this.options.funding.title ?? DEFAULTS.funding.title,
