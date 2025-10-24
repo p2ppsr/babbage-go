@@ -25,6 +25,7 @@ import {
   type GetHeaderArgs, type GetHeaderResult,
   type GetHeightResult, type GetNetworkResult, type GetVersionResult,
   type OriginatorDomainNameStringUnder250Bytes as Origin,
+  type AuthenticatedResult,
 } from '@bsv/sdk'
 
 // Error codes per SDK docs (Errors reference).
@@ -85,6 +86,7 @@ export type MonetizationOptions = {
 export type BabbageGoOptions = {
   showModal?: boolean
   hangOnWalletErrors?: boolean
+  readOnlyFallbacks?: boolean // return placeholder data for read-only calls instead of showing a modal
   mount?: HTMLElement | null
   styles?: string
   walletUnavailable?: WalletUnavailableModalOptions
@@ -95,6 +97,7 @@ export type BabbageGoOptions = {
 type ResolvedOptions = {
   showModal: boolean
   hangOnWalletErrors: boolean
+  readOnlyFallbacks: boolean
   mount: HTMLElement | null
   styles: string
   walletUnavailable: Required<WalletUnavailableModalOptions>
@@ -130,12 +133,15 @@ const DEFAULT_MONETIZATION: Required<MonetizationOptions> = {
 const DEFAULTS: ResolvedOptions = {
   showModal: true,
   hangOnWalletErrors: true,
+  readOnlyFallbacks: true,
   mount: null,
   styles: '',
   walletUnavailable: DEFAULT_WALLET_UNAVAILABLE,
   funding: DEFAULT_FUNDING,
   monetization: DEFAULT_MONETIZATION,
 }
+
+const READ_ONLY_VERSION_FALLBACK = 'babbbage-go-1.0.0' as const
 
 function resolveWalletUnavailableOptions(
   overrides?: WalletUnavailableModalOptions,
@@ -175,6 +181,7 @@ function resolveOptions(options?: BabbageGoOptions): ResolvedOptions {
   return {
     showModal: options?.showModal ?? DEFAULTS.showModal,
     hangOnWalletErrors: options?.hangOnWalletErrors ?? DEFAULTS.hangOnWalletErrors,
+    readOnlyFallbacks: options?.readOnlyFallbacks ?? DEFAULTS.readOnlyFallbacks,
     mount: options?.mount ?? DEFAULTS.mount,
     styles: options?.styles ?? DEFAULTS.styles,
     walletUnavailable: resolveWalletUnavailableOptions(options?.walletUnavailable),
@@ -327,6 +334,10 @@ function escapeHtml(s: string) {
     .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;')
 }
 
+function unauthenticatedResult(): AuthenticatedResult {
+  return { authenticated: false } as unknown as AuthenticatedResult
+}
+
 // ---------- Wrapper ----------
 
 export default class BabbageGo implements WalletInterface {
@@ -340,26 +351,24 @@ export default class BabbageGo implements WalletInterface {
   }
 
   // ----- Helper: connection-modal-on-error wrapper -----
-  private maybeShowConnectionModal(error: unknown): boolean {
-    if (!IN_BROWSER || !this.options.showModal) return false
+  private isWalletUnavailableError(error: unknown): boolean {
     const code = (error && typeof error === 'object' && 'code' in error) ? String((error as { code?: string }).code) : ''
     const message = getErrorMessage(error)
-    const indicatesNoWallet =
+    return (
       code === ERR.WALLET_NOT_CONNECTED ||
       code === ERR.AUTHENTICATION_FAILED ||
       code === ERR.WALLET_LOCKED ||
       NO_WALLET_MESSAGE_PATTERN.test(message)
-    if (indicatesNoWallet) {
-      const o = this.options.walletUnavailable
-      showWalletUnavailableModal({
-        title: o.title ?? DEFAULTS.walletUnavailable.title,
-        message: o.message ?? DEFAULTS.walletUnavailable.message,
-        ctaText: o.ctaText ?? DEFAULTS.walletUnavailable.ctaText,
-        ctaHref: o.ctaHref ?? DEFAULTS.walletUnavailable.ctaHref,
-      }, this.options.mount)
-      return true
-    }
-    return false
+    )
+  }
+
+  private shouldShowWalletUnavailableModal(error: unknown): boolean {
+    return IN_BROWSER && this.options.showModal && this.isWalletUnavailableError(error)
+  }
+
+  private presentWalletUnavailableModal() {
+    if (!IN_BROWSER) return
+    showWalletUnavailableModal(this.options.walletUnavailable, this.options.mount)
   }
 
   private hangForever<T>(): Promise<T> {
@@ -368,17 +377,29 @@ export default class BabbageGo implements WalletInterface {
   }
 
   private maybeHandleWalletConnectionError<T>(error: unknown): Promise<T> | null {
-    const walletError = this.maybeShowConnectionModal(error)
-    if (walletError && this.options.hangOnWalletErrors) {
-      return this.hangForever<T>()
+    if (this.shouldShowWalletUnavailableModal(error)) {
+      this.presentWalletUnavailableModal()
+      if (this.options.hangOnWalletErrors) {
+        return this.hangForever<T>()
+      }
     }
     return null
   }
 
-  private async executeWithWalletHandling<T>(operation: () => Promise<T>): Promise<T> {
+  private async executeWithWalletHandling<T>(
+    operation: () => Promise<T>,
+    fallbackOnWalletUnavailable?: () => T | Promise<T>,
+  ): Promise<T> {
     try {
       return await operation()
     } catch (e) {
+      if (
+        fallbackOnWalletUnavailable &&
+        this.options.readOnlyFallbacks &&
+        this.shouldShowWalletUnavailableModal(e)
+      ) {
+        return await Promise.resolve(fallbackOnWalletUnavailable())
+      }
       const hang = this.maybeHandleWalletConnectionError<T>(e)
       if (hang) return hang
       throw e
@@ -462,13 +483,19 @@ export default class BabbageGo implements WalletInterface {
     return this.executeWithWalletHandling(() => this.base.signAction(a, o))
   }
   async listActions(a: ListActionsArgs, o?: Origin): Promise<ListActionsResult> {
-    return this.executeWithWalletHandling(() => this.base.listActions(a, o))
+    return this.executeWithWalletHandling(
+      () => this.base.listActions(a, o),
+      () => ({ totalActions: 0, actions: [] }),
+    )
   }
   async listCertificates(a: ListCertificatesArgs, o?: Origin): Promise<ListCertificatesResult> {
     return this.executeWithWalletHandling(() => this.base.listCertificates(a, o))
   }
   async listOutputs(a: ListOutputsArgs, o?: Origin): Promise<ListOutputsResult> {
-    return this.executeWithWalletHandling(() => this.base.listOutputs(a, o))
+    return this.executeWithWalletHandling(
+      () => this.base.listOutputs(a, o),
+      () => ({ totalOutputs: 0, outputs: [] }),
+    )
   }
   async acquireCertificate(a: AcquireCertificateArgs, o?: Origin): Promise<CertificateResult> {
     return this.executeWithWalletHandling(() => this.base.acquireCertificate(a, o))
@@ -495,19 +522,31 @@ export default class BabbageGo implements WalletInterface {
     return this.executeWithWalletHandling(() => this.base.getHeaderForHeight(a, o))
   }
   async getHeight(a: Parameters<WalletInterface['getHeight']>[0], o?: Origin): Promise<GetHeightResult> {
-    return this.executeWithWalletHandling(() => this.base.getHeight(a as any, o))
+    return this.executeWithWalletHandling(
+      () => this.base.getHeight(a as any, o),
+      () => ({ height: 0 }),
+    )
   }
   async getNetwork(a: Parameters<WalletInterface['getNetwork']>[0], o?: Origin): Promise<GetNetworkResult> {
     return this.executeWithWalletHandling(() => this.base.getNetwork(a as any, o))
   }
   async getVersion(a: Parameters<WalletInterface['getVersion']>[0], o?: Origin): Promise<GetVersionResult> {
-    return this.executeWithWalletHandling(() => this.base.getVersion(a as any, o))
+    return this.executeWithWalletHandling(
+      () => this.base.getVersion(a as any, o),
+      () => ({ version: READ_ONLY_VERSION_FALLBACK }),
+    )
   }
   async isAuthenticated(a: Parameters<WalletInterface['isAuthenticated']>[0], o?: Origin) {
-    return this.executeWithWalletHandling(() => this.base.isAuthenticated(a as any, o))
+    return this.executeWithWalletHandling(
+      () => this.base.isAuthenticated(a as any, o),
+      () => unauthenticatedResult(),
+    )
   }
   async waitForAuthentication(a: Parameters<WalletInterface['waitForAuthentication']>[0], o?: Origin) {
-    return this.executeWithWalletHandling(() => this.base.waitForAuthentication(a as any, o))
+    return this.executeWithWalletHandling(
+      () => this.base.waitForAuthentication(a as any, o),
+      () => unauthenticatedResult(),
+    )
   }
   async abortAction(a: Parameters<WalletInterface['abortAction']>[0], o?: Origin) {
     return this.executeWithWalletHandling(() => this.base.abortAction(a as any, o))
