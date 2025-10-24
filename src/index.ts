@@ -84,6 +84,7 @@ export type MonetizationOptions = {
 
 export type BabbageGoOptions = {
   showModal?: boolean
+  hangOnWalletErrors?: boolean
   mount?: HTMLElement | null
   styles?: string
   walletUnavailable?: WalletUnavailableModalOptions
@@ -93,6 +94,7 @@ export type BabbageGoOptions = {
 
 type ResolvedOptions = {
   showModal: boolean
+  hangOnWalletErrors: boolean
   mount: HTMLElement | null
   styles: string
   walletUnavailable: Required<WalletUnavailableModalOptions>
@@ -127,6 +129,7 @@ const DEFAULT_MONETIZATION: Required<MonetizationOptions> = {
 
 const DEFAULTS: ResolvedOptions = {
   showModal: true,
+  hangOnWalletErrors: true,
   mount: null,
   styles: '',
   walletUnavailable: DEFAULT_WALLET_UNAVAILABLE,
@@ -171,6 +174,7 @@ function resolveMonetizationOptions(
 function resolveOptions(options?: BabbageGoOptions): ResolvedOptions {
   return {
     showModal: options?.showModal ?? DEFAULTS.showModal,
+    hangOnWalletErrors: options?.hangOnWalletErrors ?? DEFAULTS.hangOnWalletErrors,
     mount: options?.mount ?? DEFAULTS.mount,
     styles: options?.styles ?? DEFAULTS.styles,
     walletUnavailable: resolveWalletUnavailableOptions(options?.walletUnavailable),
@@ -336,8 +340,8 @@ export default class BabbageGo implements WalletInterface {
   }
 
   // ----- Helper: connection-modal-on-error wrapper -----
-  private maybeShowConnectionModal(error: unknown) {
-    if (!IN_BROWSER || !this.options.showModal) return
+  private maybeShowConnectionModal(error: unknown): boolean {
+    if (!IN_BROWSER || !this.options.showModal) return false
     const code = (error && typeof error === 'object' && 'code' in error) ? String((error as { code?: string }).code) : ''
     const message = getErrorMessage(error)
     const indicatesNoWallet =
@@ -353,6 +357,31 @@ export default class BabbageGo implements WalletInterface {
         ctaText: o.ctaText ?? DEFAULTS.walletUnavailable.ctaText,
         ctaHref: o.ctaHref ?? DEFAULTS.walletUnavailable.ctaHref,
       }, this.options.mount)
+      return true
+    }
+    return false
+  }
+
+  private hangForever<T>(): Promise<T> {
+    // Used to keep the UI flow paused after surfacing wallet modals.
+    return new Promise<T>(() => {})
+  }
+
+  private maybeHandleWalletConnectionError<T>(error: unknown): Promise<T> | null {
+    const walletError = this.maybeShowConnectionModal(error)
+    if (walletError && this.options.hangOnWalletErrors) {
+      return this.hangForever<T>()
+    }
+    return null
+  }
+
+  private async executeWithWalletHandling<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation()
+    } catch (e) {
+      const hang = this.maybeHandleWalletConnectionError<T>(e)
+      if (hang) return hang
+      throw e
     }
   }
 
@@ -364,7 +393,8 @@ export default class BabbageGo implements WalletInterface {
       // TODO: Submit a copy of the action to the developer with Message Box Client
       return result
     } catch (e) {
-      this.maybeShowConnectionModal(e)
+      const hang = this.maybeHandleWalletConnectionError<CreateActionResult>(e)
+      if (hang) return hang
 
       // Funding flow (only for INSUFFICIENT_FUNDS)
       const code = (e && typeof e === 'object' && 'code' in e) ? String((e as { code?: string }).code) : ''
@@ -402,84 +432,84 @@ export default class BabbageGo implements WalletInterface {
 
   // ----- Straight pass-throughs with connection-modal-on-error behavior -----
   async getPublicKey(a: GetPublicKeyArgs, o?: Origin): Promise<GetPublicKeyResult> {
-    try { return await this.base.getPublicKey(a, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.getPublicKey(a, o))
   }
   async revealCounterpartyKeyLinkage(a: RevealCounterpartyKeyLinkageArgs, o?: Origin): Promise<RevealCounterpartyKeyLinkageResult> {
-    try { return await this.base.revealCounterpartyKeyLinkage(a, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.revealCounterpartyKeyLinkage(a, o))
   }
   async revealSpecificKeyLinkage(a: RevealSpecificKeyLinkageArgs, o?: Origin): Promise<RevealSpecificKeyLinkageResult> {
-    try { return await this.base.revealSpecificKeyLinkage(a, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.revealSpecificKeyLinkage(a, o))
   }
   async encrypt(a: WalletEncryptArgs, o?: Origin): Promise<WalletEncryptResult> {
-    try { return await this.base.encrypt(a, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.encrypt(a, o))
   }
   async decrypt(a: WalletDecryptArgs, o?: Origin): Promise<WalletDecryptResult> {
-    try { return await this.base.decrypt(a, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.decrypt(a, o))
   }
   async createHmac(a: CreateHmacArgs, o?: Origin): Promise<CreateHmacResult> {
-    try { return await this.base.createHmac(a, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.createHmac(a, o))
   }
   async verifyHmac(a: VerifyHmacArgs, o?: Origin): Promise<VerifyHmacResult> {
-    try { return await this.base.verifyHmac(a, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.verifyHmac(a, o))
   }
   async createSignature(a: CreateSignatureArgs, o?: Origin): Promise<CreateSignatureResult> {
-    try { return await this.base.createSignature(a, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.createSignature(a, o))
   }
   async verifySignature(a: VerifySignatureArgs, o?: Origin): Promise<VerifySignatureResult> {
-    try { return await this.base.verifySignature(a, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.verifySignature(a, o))
   }
   async signAction(a: SignActionArgs, o?: Origin): Promise<SignActionResult> {
-    try { return await this.base.signAction(a, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.signAction(a, o))
   }
   async listActions(a: ListActionsArgs, o?: Origin): Promise<ListActionsResult> {
-    try { return await this.base.listActions(a, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.listActions(a, o))
   }
   async listCertificates(a: ListCertificatesArgs, o?: Origin): Promise<ListCertificatesResult> {
-    try { return await this.base.listCertificates(a, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.listCertificates(a, o))
   }
   async listOutputs(a: ListOutputsArgs, o?: Origin): Promise<ListOutputsResult> {
-    try { return await this.base.listOutputs(a, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.listOutputs(a, o))
   }
   async acquireCertificate(a: AcquireCertificateArgs, o?: Origin): Promise<CertificateResult> {
-    try { return await this.base.acquireCertificate(a, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.acquireCertificate(a, o))
   }
   async proveCertificate(a: ProveCertificateArgs, o?: Origin): Promise<ProveCertificateResult> {
-    try { return await this.base.proveCertificate(a, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.proveCertificate(a, o))
   }
   async relinquishCertificate(a: RelinquishCertificateArgs, o?: Origin): Promise<RelinquishCertificateResult> {
-    try { return await this.base.relinquishCertificate(a, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.relinquishCertificate(a, o))
   }
   async internalizeAction(a: InternalizeActionArgs, o?: Origin): Promise<InternalizeActionResult> {
-    try { return await this.base.internalizeAction(a, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.internalizeAction(a, o))
   }
   async relinquishOutput(a: RelinquishOutputArgs, o?: Origin): Promise<RelinquishOutputResult> {
-    try { return await this.base.relinquishOutput(a, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.relinquishOutput(a, o))
   }
   async discoverByAttributes(a: Parameters<WalletInterface['discoverByAttributes']>[0], o?: Origin) {
-    try { return await this.base.discoverByAttributes(a, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.discoverByAttributes(a, o))
   }
   async discoverByIdentityKey(a: Parameters<WalletInterface['discoverByIdentityKey']>[0], o?: Origin) {
-    try { return await this.base.discoverByIdentityKey(a, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.discoverByIdentityKey(a, o))
   }
   async getHeaderForHeight(a: GetHeaderArgs, o?: Origin): Promise<GetHeaderResult> {
-    try { return await this.base.getHeaderForHeight(a, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.getHeaderForHeight(a, o))
   }
   async getHeight(a: Parameters<WalletInterface['getHeight']>[0], o?: Origin): Promise<GetHeightResult> {
-    try { return await this.base.getHeight(a as any, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.getHeight(a as any, o))
   }
   async getNetwork(a: Parameters<WalletInterface['getNetwork']>[0], o?: Origin): Promise<GetNetworkResult> {
-    try { return await this.base.getNetwork(a as any, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.getNetwork(a as any, o))
   }
   async getVersion(a: Parameters<WalletInterface['getVersion']>[0], o?: Origin): Promise<GetVersionResult> {
-    try { return await this.base.getVersion(a as any, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.getVersion(a as any, o))
   }
   async isAuthenticated(a: Parameters<WalletInterface['isAuthenticated']>[0], o?: Origin) {
-    try { return await this.base.isAuthenticated(a as any, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.isAuthenticated(a as any, o))
   }
   async waitForAuthentication(a: Parameters<WalletInterface['waitForAuthentication']>[0], o?: Origin) {
-    try { return await this.base.waitForAuthentication(a as any, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.waitForAuthentication(a as any, o))
   }
   async abortAction(a: Parameters<WalletInterface['abortAction']>[0], o?: Origin) {
-    try { return await this.base.abortAction(a as any, o) } catch (e) { this.maybeShowConnectionModal(e); throw e }
+    return this.executeWithWalletHandling(() => this.base.abortAction(a as any, o))
   }
 }
