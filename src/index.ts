@@ -598,9 +598,13 @@ function showFundingModal(
     )
     let inRetry = false
     cancel.addEventListener('click', () => { destroyOverlay(root); resolve('cancel') })
-    buy.addEventListener('click', () => {
+    buy.addEventListener('click', (ev) => {
       if (!inRetry) {
-        // switch to retry mode
+        const url = opts.buySatsUrl
+        if (url && typeof window === 'object' && typeof window.open === 'function') {
+          try { window.open(url, '_blank', 'noopener,noreferrer') } catch {}
+        }
+        ev.preventDefault()
         inRetry = true
         buy.textContent = opts.retryText
         buy.removeAttribute('href'); buy.removeAttribute('target'); buy.removeAttribute('rel')
@@ -709,8 +713,22 @@ export default class BabbageGo implements WalletInterface {
         code === ERR.INSUFFICIENT_FUNDS || INSUFFICIENT_FUNDS_MESSAGE_PATTERN.test(message)
       if (IN_BROWSER && this.options.showModal && insufficientFundsDetected) {
         ensureStyle(this.options.design.cssText)
+        let neededSats: number | undefined
+        {
+          const m1 = message.match(/(\d+)\s+more\s+satoshis\s+are\s+needed/i)
+          if (m1) neededSats = Number(m1[1])
+          else {
+            const m2 = message.match(/for a total of\s+(\d+)/i)
+            if (m2) neededSats = Number(m2[1])
+          }
+        }
+        const baseUrl = this.options.funding.buySatsUrl
+        const computedBuyUrl =
+          neededSats && Number.isFinite(neededSats) && neededSats > 0
+            ? `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}sats=${encodeURIComponent(String(neededSats))}`
+            : baseUrl
         const choice = await showFundingModal(
-          this.options.funding,
+          { ...this.options.funding, buySatsUrl: computedBuyUrl } as Required<FundingModalOptions>,
           args.description,
           this.options.mount,
         )
