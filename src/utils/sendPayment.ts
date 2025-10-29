@@ -33,6 +33,7 @@ export interface PaymentToken {
   };
   transaction: AtomicBEEF;
   amount: number;
+  outputIndex?: number;
 }
 
 export async function createActionWithHydratedArgs(
@@ -60,6 +61,8 @@ export async function createActionWithHydratedArgs(
     return action;
   }
 
+  const newOutputs: number[] = [];
+  
   // Developer
   let developerPublicKey: string | undefined;
   if (recipients.developer != null) {
@@ -78,6 +81,8 @@ export async function createActionWithHydratedArgs(
     const developerLockingScript = new P2PKH()
       .lock(PublicKey.fromString(developerPublicKey).toAddress())
       .toHex();
+
+    newOutputs.push(args.outputs.length);
 
     args.outputs.push({
       satoshis: recipients.developer.amount,
@@ -107,7 +112,9 @@ export async function createActionWithHydratedArgs(
     .lock(PublicKey.fromString(basePublicKey).toAddress())
     .toHex();
 
-  args.outputs.push({
+    newOutputs.push(args.outputs.length);
+
+    args.outputs.push({
     satoshis: recipients.base.amount,
     lockingScript: baseLockingScript,
     customInstructions: JSON.stringify({
@@ -119,7 +126,7 @@ export async function createActionWithHydratedArgs(
   });
 
   const action = await walletClient.createAction(args);
-  if (action.tx === undefined) throw new Error('Transaction creation failed!');
+  if (action.tx === undefined) return action;
 
   // Send payment tokens
   const messageBox = new MessageBoxClient({
@@ -128,12 +135,11 @@ export async function createActionWithHydratedArgs(
     enableLogging: false,
   });
 
-  for (const output of args.outputs) {
-    debugger;
+  for (const outputIndex of newOutputs) {
+    const output = args.outputs[outputIndex];
     if (output.customInstructions === undefined) continue;
     const customInstructions = JSON.parse(output.customInstructions);
     if (customInstructions.payee === undefined) continue;
-    if (args.outputs[0] === output) continue;
 
     const paymentToken: PaymentToken = {
       customInstructions: {
@@ -142,15 +148,15 @@ export async function createActionWithHydratedArgs(
       },
       transaction: action.tx,
       amount: output.satoshis,
+      outputIndex,
     };
 
     await messageBox.sendMessage({
       recipient: customInstructions.payee.identity,
       messageBox: STANDARD_PAYMENT_MESSAGEBOX,
-      body: JSON.stringify(paymentToken),
+      body: JSON.stringify(paymentToken)
     });
   }
 
-  // TODO
   return action;
 }
