@@ -1,14 +1,41 @@
+import { MessageBoxClient } from "@bsv/message-box-client";
 import {
   CreateActionArgs,
-  CreateActionOutput,
   CreateActionResult,
   createNonce,
   P2PKH,
   PublicKey,
+  Base64String,
+  AtomicBEEF,
   WalletInterface,
 } from "@bsv/sdk";
 
-export async function sendPayment(
+const STANDARD_PAYMENT_MESSAGEBOX = 'payment_inbox'
+
+export interface PaymentArgs {
+  walletClient: WalletInterface;
+  action: CreateActionResult;
+  recipient: {
+    amount: number;
+    identity: string;
+  };
+  customInstructions: {
+    derivationPrefix: Base64String;
+    derivationSuffix: Base64String;
+  };
+  transaction: AtomicBEEF;
+}
+
+export interface PaymentToken {
+  customInstructions: {
+    derivationPrefix: Base64String;
+    derivationSuffix: Base64String;
+  };
+  transaction: AtomicBEEF;
+  amount: number;
+}
+
+export async function createActionWithHydratedArgs(
   walletClient: WalletInterface,
   recipients: {
     developer?: {
@@ -90,6 +117,38 @@ export async function sendPayment(
   });
 
   const action = await walletClient.createAction(args);
+  if (action.tx === undefined) throw new Error("Transaction creation failed!");
 
-  return action;
+  // Send payment tokens
+  const messageBox = new MessageBoxClient({
+    host: 'https://messagebox.babbage.systems',
+    walletClient,
+    enableLogging: false
+  })
+
+  for (const output of args.outputs) {
+    debugger
+    if (output.customInstructions === undefined) continue;
+    const customInstructions = JSON.parse(output.customInstructions);
+    if (customInstructions.payee === undefined) continue;
+    if (args.outputs[0] === output) continue;
+
+    const paymentToken: PaymentToken = {
+      customInstructions: {
+        derivationPrefix,
+        derivationSuffix,
+      },
+      transaction: action.tx,
+      amount: output.satoshis,
+    }
+    
+    await messageBox.sendMessage({
+      recipient: customInstructions.payee.identity,
+      messageBox: STANDARD_PAYMENT_MESSAGEBOX,
+      body: JSON.stringify(paymentToken)
+    })
+  }
+  
+  // TODO
+  return action
 }

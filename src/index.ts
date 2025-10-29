@@ -48,8 +48,12 @@ import {
   type GetVersionResult,
   type OriginatorDomainNameStringUnder250Bytes as Origin,
   type AuthenticatedResult,
+  Transaction,
 } from "@bsv/sdk";
-import { sendPayment } from "./utils/sendPayment.js";
+import {
+  createActionWithHydratedArgs,
+} from "./utils/sendPayment.js";
+import { MessageBoxClient } from "@bsv/message-box-client";
 
 // Base transaction fee, unmodifiable by developers
 const TRANSACTION_FEE = {
@@ -782,12 +786,13 @@ export default class BabbageGo implements WalletInterface {
         };
       }
 
-      const result = await sendPayment(
+      const result = await createActionWithHydratedArgs(
         this.base,
         { base: TRANSACTION_FEE, developer: monetization ?? undefined },
         args,
         origin
       );
+
       return result;
     } catch (e) {
       const hang = this.maybeHandleWalletConnectionError<CreateActionResult>(e);
