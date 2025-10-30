@@ -2,15 +2,18 @@ import { MessageBoxClient } from '@bsv/message-box-client';
 import {
   CreateActionArgs,
   CreateActionResult,
-  createNonce,
   P2PKH,
   PublicKey,
   Base64String,
   AtomicBEEF,
   WalletInterface,
+  Random,
+  Utils,
+  Transaction,
 } from '@bsv/sdk';
 
 const STANDARD_PAYMENT_MESSAGEBOX = 'payment_inbox';
+let mbc: MessageBoxClient
 
 export interface PaymentArgs {
   walletClient: WalletInterface;
@@ -48,24 +51,17 @@ export async function createActionWithHydratedArgs(
       identity: string;
     };
   },
-  args?: CreateActionArgs,
+  args: CreateActionArgs,
   origin?: string
 ): Promise<CreateActionResult> {
-  const derivationPrefix = await createNonce(walletClient);
-  const derivationSuffix = await createNonce(walletClient);
-
-  if (args === undefined) throw new Error('No action arguments provided');
-
-  if (args.outputs === undefined || args.outputs?.length === 0) {
-    const action = await walletClient.createAction(args);
-    return action;
-  }
-
-  const newOutputs: number[] = [];
+  const derivationPrefix = Utils.toBase64(Random(16));
+  const derivationSuffix = Utils.toBase64(Random(16));
+  args.outputs ??= []
   
   // Developer
   let developerPublicKey: string | undefined;
-  if (recipients.developer != null) {
+  let developerLockingScript: string | undefined;
+  if (recipients.developer != null && recipients.developer.identity.length === 66) {
     ({ publicKey: developerPublicKey } = await walletClient.getPublicKey(
       {
         protocolID: [2, '3241645161d8'],
@@ -74,16 +70,9 @@ export async function createActionWithHydratedArgs(
       },
       origin
     ));
-
-    if (developerPublicKey == null || developerPublicKey.trim() === '') {
-      throw new Error('Failed to derive developer’s public key');
-    }
-    const developerLockingScript = new P2PKH()
+    developerLockingScript = new P2PKH()
       .lock(PublicKey.fromString(developerPublicKey).toAddress())
       .toHex();
-
-    newOutputs.push(args.outputs.length);
-
     args.outputs.push({
       satoshis: recipients.developer.amount,
       lockingScript: developerLockingScript,
@@ -105,16 +94,11 @@ export async function createActionWithHydratedArgs(
     },
     origin
   );
-  if (basePublicKey == null || basePublicKey.trim() === '') {
-    throw new Error('Failed to derive base’s public key');
-  }
   const baseLockingScript = new P2PKH()
     .lock(PublicKey.fromString(basePublicKey).toAddress())
     .toHex();
 
-    newOutputs.push(args.outputs.length);
-
-    args.outputs.push({
+  args.outputs.push({
     satoshis: recipients.base.amount,
     lockingScript: baseLockingScript,
     customInstructions: JSON.stringify({
@@ -122,41 +106,56 @@ export async function createActionWithHydratedArgs(
       derivationSuffix,
       payee: recipients.base,
     }),
-    outputDescription: 'Transaction Fee',
+    outputDescription: 'Babbage Go',
   });
 
   const action = await walletClient.createAction(args);
-  if (action.tx === undefined) return action;
+  return new Promise(async r => {
+    r(action);
+    if (action.tx === undefined) return;
+    const outs = Transaction.fromAtomicBEEF(action.tx).outputs
 
-  // Send payment tokens
-  const messageBox = new MessageBoxClient({
-    host: 'https://messagebox.babbage.systems',
-    walletClient,
-    enableLogging: false,
-  });
+    // Send payment tokens
+    if (!mbc) {
+      mbc = new MessageBoxClient({
+        host: 'https://messagebox.babbage.systems',
+        walletClient,
+        enableLogging: false,
+      });
+    }
 
-  for (const outputIndex of newOutputs) {
-    const output = args.outputs[outputIndex];
-    if (output.customInstructions === undefined) continue;
-    const customInstructions = JSON.parse(output.customInstructions);
-    if (customInstructions.payee === undefined) continue;
-
-    const paymentToken: PaymentToken = {
-      customInstructions: {
-        derivationPrefix,
-        derivationSuffix,
-      },
-      transaction: action.tx,
-      amount: output.satoshis,
-      outputIndex,
-    };
-
-    await messageBox.sendMessage({
-      recipient: customInstructions.payee.identity,
-      messageBox: STANDARD_PAYMENT_MESSAGEBOX,
-      body: JSON.stringify(paymentToken)
-    });
-  }
-
-  return action;
+    for (let oi = 0; oi < outs.length; oi++) {
+      if (outs[oi].lockingScript.toHex() === developerLockingScript) {
+        const paymentToken: PaymentToken = {
+          customInstructions: {
+            derivationPrefix,
+            derivationSuffix,
+          },
+          transaction: action.tx,
+          amount: outs[oi].satoshis as number,
+          outputIndex: oi
+        };
+        mbc.sendMessage({
+          recipient: recipients.developer!.identity,
+          messageBox: STANDARD_PAYMENT_MESSAGEBOX,
+          body: JSON.stringify(paymentToken)
+        });
+      } else if (outs[oi].lockingScript.toHex() === baseLockingScript) {
+        const paymentToken: PaymentToken = {
+          customInstructions: {
+            derivationPrefix,
+            derivationSuffix,
+          },
+          transaction: action.tx,
+          amount: outs[oi].satoshis as number,
+          outputIndex: oi
+        };
+        mbc.sendMessage({
+          recipient: recipients.base.identity,
+          messageBox: STANDARD_PAYMENT_MESSAGEBOX,
+          body: JSON.stringify(paymentToken)
+        });
+      }
+    }
+  })
 }

@@ -601,7 +601,7 @@ function showWalletUnavailableModal(
   const root = overlayRoot(mount);
   const link = document.createElement('a');
   link.className = 'bgo-link';
-  link.href = opts.ctaHref;
+  link.href = `${opts.ctaHref}?app=${encodeURIComponent(location.hostname)}`;
   link.target = '_blank';
   link.rel = 'noopener noreferrer';
   link.textContent = opts.ctaText;
@@ -764,7 +764,7 @@ export default class BabbageGo implements WalletInterface {
     }
   }
 
-  // ----- Special handling for createAction (funding flow + monetization label) -----
+  // ----- Special handling for createAction (funding flow + monetization) -----
   async createAction(
     args: CreateActionArgs,
     origin?: Origin
@@ -819,7 +819,7 @@ export default class BabbageGo implements WalletInterface {
           neededSats && Number.isFinite(neededSats) && neededSats > 0
             ? `${baseUrl}${
                 baseUrl.includes('?') ? '&' : '?'
-              }sats=${encodeURIComponent(String(neededSats))}`
+              }sats=${encodeURIComponent(String(neededSats))}&actionDescription=${encodeURIComponent(String(args.description))}`
             : baseUrl;
         const choice = await showFundingModal(
           {
