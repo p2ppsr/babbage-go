@@ -49,8 +49,14 @@ import {
   type OriginatorDomainNameStringUnder250Bytes as Origin,
   type AuthenticatedResult,
   Transaction,
+  P2PKH,
+  PublicKey,
+  Base64String,
+  AtomicBEEF,
+  Random,
+  Utils
 } from '@bsv/sdk';
-import { createActionWithHydratedArgs } from './utils/sendPayment.js';
+import { MessageBoxClient } from '@bsv/message-box-client';
 
 // Base transaction fee, unmodifiable by developers
 const TRANSACTION_FEE = {
@@ -683,11 +689,43 @@ function unauthenticatedResult(): AuthenticatedResult {
   return { authenticated: false } as unknown as AuthenticatedResult;
 }
 
+const STANDARD_PAYMENT_MESSAGEBOX = 'payment_inbox';
+let mbc: MessageBoxClient
+
+export interface PaymentArgs {
+  walletClient: WalletInterface;
+  action: CreateActionResult;
+  recipient: {
+    amount: number;
+    identity: string;
+  };
+  customInstructions: {
+    derivationPrefix: Base64String;
+    derivationSuffix: Base64String;
+  };
+  transaction: AtomicBEEF;
+}
+
+export interface PaymentToken {
+  customInstructions: {
+    derivationPrefix: Base64String;
+    derivationSuffix: Base64String;
+  };
+  transaction: AtomicBEEF;
+  amount: number;
+  outputIndex?: number;
+}
+
 // ---------- Wrapper ----------
 
 export default class BabbageGo implements WalletInterface {
   readonly base: WalletInterface;
   readonly options: ResolvedOptions;
+  private pendingScripts: Record<string, {
+    identity: string,
+    derivationPrefix: string,
+    derivationSuffix: string
+  }> = {}
 
   constructor(wallet?: WalletInterface, options?: BabbageGoOptions) {
     this.base = wallet ?? new WalletClient();
@@ -764,6 +802,142 @@ export default class BabbageGo implements WalletInterface {
     }
   }
 
+  private async createActionWithHydratedArgs(
+    walletClient: WalletInterface,
+    recipients: {
+      developer?: {
+        amount: number;
+        identity: string;
+      };
+      base: {
+        amount: number;
+        identity: string;
+      };
+    },
+    args: CreateActionArgs,
+    origin?: string
+  ): Promise<CreateActionResult> {
+    const derivationPrefix = Utils.toBase64(Random(16));
+    const derivationSuffix = Utils.toBase64(Random(16));
+    args.outputs ??= []
+    
+    // Developer
+    let developerPublicKey: string | undefined;
+    let developerLockingScript: string | undefined;
+    if (recipients.developer != null && recipients.developer.identity.length === 66) {
+      ({ publicKey: developerPublicKey } = await walletClient.getPublicKey(
+        {
+          protocolID: [2, '3241645161d8'],
+          keyID: `${derivationPrefix} ${derivationSuffix}`,
+          counterparty: recipients.developer.identity,
+        },
+        origin
+      ));
+      developerLockingScript = new P2PKH()
+        .lock(PublicKey.fromString(developerPublicKey).toAddress())
+        .toHex();
+      args.outputs.push({
+        satoshis: recipients.developer.amount,
+        lockingScript: developerLockingScript,
+        customInstructions: JSON.stringify({
+          derivationPrefix,
+          derivationSuffix,
+          payee: recipients.developer,
+        }),
+        outputDescription: 'Fee to developer',
+      });
+    }
+
+    // Base
+    const { publicKey: basePublicKey } = await walletClient.getPublicKey(
+      {
+        protocolID: [2, '3241645161d8'],
+        keyID: `${derivationPrefix} ${derivationSuffix}`,
+        counterparty: recipients.base.identity,
+      },
+      origin
+    );
+    const baseLockingScript = new P2PKH()
+      .lock(PublicKey.fromString(basePublicKey).toAddress())
+      .toHex();
+
+    args.outputs.push({
+      satoshis: recipients.base.amount,
+      lockingScript: baseLockingScript,
+      customInstructions: JSON.stringify({
+        derivationPrefix,
+        derivationSuffix,
+        payee: recipients.base,
+      }),
+      outputDescription: 'Babbage Go',
+    });
+
+    const action = await walletClient.createAction(args);
+    return new Promise(async r => {
+      r(action);
+      if (typeof action.signableTransaction === 'object') {
+        this.pendingScripts[baseLockingScript] = {
+          derivationPrefix,
+          derivationSuffix,
+          identity: recipients.base.identity
+        }
+        if (typeof developerLockingScript === 'string') {
+          this.pendingScripts[developerLockingScript] = {
+            derivationPrefix,
+            derivationSuffix,
+            identity: recipients.developer!.identity
+          }
+        }
+        return
+      }
+      if (action.tx === undefined) return;
+      const outs = Transaction.fromAtomicBEEF(action.tx).outputs
+
+      // Send payment tokens
+      if (!mbc) {
+        mbc = new MessageBoxClient({
+          host: 'https://messagebox.babbage.systems',
+          walletClient,
+          enableLogging: false,
+        });
+      }
+
+      for (let oi = 0; oi < outs.length; oi++) {
+        if (outs[oi].lockingScript.toHex() === developerLockingScript) {
+          const paymentToken: PaymentToken = {
+            customInstructions: {
+              derivationPrefix,
+              derivationSuffix,
+            },
+            transaction: action.tx,
+            amount: outs[oi].satoshis as number,
+            outputIndex: oi
+          };
+          mbc.sendMessage({
+            recipient: recipients.developer!.identity,
+            messageBox: STANDARD_PAYMENT_MESSAGEBOX,
+            body: JSON.stringify(paymentToken)
+          });
+        } else if (outs[oi].lockingScript.toHex() === baseLockingScript) {
+          const paymentToken: PaymentToken = {
+            customInstructions: {
+              derivationPrefix,
+              derivationSuffix,
+            },
+            transaction: action.tx,
+            amount: outs[oi].satoshis as number,
+            outputIndex: oi
+          };
+          mbc.sendMessage({
+            recipient: recipients.base.identity,
+            messageBox: STANDARD_PAYMENT_MESSAGEBOX,
+            body: JSON.stringify(paymentToken)
+          });
+        }
+      }
+    })
+  }
+
   // ----- Special handling for createAction (funding flow + monetization) -----
   async createAction(
     args: CreateActionArgs,
@@ -782,7 +956,7 @@ export default class BabbageGo implements WalletInterface {
         };
       }
 
-      const result = await createActionWithHydratedArgs(
+      const result = await this.createActionWithHydratedArgs(
         this.base,
         { base: TRANSACTION_FEE, developer: monetization ?? undefined },
         args,
@@ -916,7 +1090,44 @@ export default class BabbageGo implements WalletInterface {
 
   async signAction(a: SignActionArgs, o?: Origin): Promise<SignActionResult> {
     return await this.executeWithWalletHandling(
-      async () => await this.base.signAction(a, o)
+      async () => {
+        const result = await this.base.signAction(a, o)
+        return new Promise(r => {
+          r(result)
+          if (!Array.isArray(result.tx)) return
+          const outs = Transaction.fromAtomicBEEF(result.tx).outputs
+
+          if (!mbc) {
+            mbc = new MessageBoxClient({
+              host: 'https://messagebox.babbage.systems',
+              walletClient: this.base,
+              enableLogging: false,
+            });
+          }
+
+          for (let oi = 0; oi < outs.length; oi++) {
+            const scrh = outs[oi].lockingScript.toHex()
+            const info = this.pendingScripts[scrh]
+            if (info) {
+              const paymentToken: PaymentToken = {
+                customInstructions: {
+                  derivationPrefix: info.derivationPrefix,
+                  derivationSuffix: info.derivationSuffix,
+                },
+                transaction: result.tx,
+                amount: outs[oi].satoshis as number,
+                outputIndex: oi
+              };
+              mbc.sendMessage({
+                recipient: info.identity,
+                messageBox: STANDARD_PAYMENT_MESSAGEBOX,
+                body: JSON.stringify(paymentToken)
+              });
+              delete this.pendingScripts[scrh];
+            }
+          }
+        })
+      }
     );
   }
 
