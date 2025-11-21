@@ -1,13 +1,15 @@
 import { rename, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
-const from = join('dist', 'cjs', 'index.js')
-const to = join('dist', 'cjs', 'index.cjs')
+for (const file of ['index', 'showFundingModal']) {
+  const from = join('dist', 'cjs', `${file}.js`)
+  const to = join('dist', 'cjs', `${file}.cjs`)
 
-try {
-  await stat(from)
-  await rename(from, to)
-  console.log('[rename-to-cjs] renamed index.js -> index.cjs')
-} catch {
-  console.warn('[rename-to-cjs] nothing to rename.')
+  try {
+    await stat(from)
+    await rename(from, to)
+    console.log(`[rename-to-cjs] renamed ${file}.js -> ${file}.cjs`)
+  } catch {
+    console.warn('[rename-to-cjs] nothing to rename.')
+  }
 }

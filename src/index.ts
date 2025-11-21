@@ -54,9 +54,12 @@ import {
   Base64String,
   AtomicBEEF,
   Random,
-  Utils
+  Utils,
+  WERR_INSUFFICIENT_FUNDS
 } from '@bsv/sdk';
 import { MessageBoxClient } from '@bsv/message-box-client';
+import { showFundingModal } from './showFundingModal.js';
+export { showFundingModal } from './showFundingModal.js';
 
 // Base transaction fee, unmodifiable by developers
 const TRANSACTION_FEE = {
@@ -92,7 +95,7 @@ function getErrorMessage(error: unknown): string {
 }
 
 // Environment guard
-const IN_BROWSER =
+export const IN_BROWSER =
   typeof window === 'object' &&
   typeof document === 'object' &&
   typeof document.createElement === 'function';
@@ -200,7 +203,7 @@ const DEFAULT_WALLET_UNAVAILABLE: Required<WalletUnavailableModalOptions> = {
 };
 
 const DEFAULT_FUNDING: Required<FundingModalOptions> = {
-  title: 'Not enough sats',
+  title: 'Not enough sats 2',
   introText: 'Top up your wallet, then click “Retry” to finish the action.',
   postPurchaseText:
     'If you’ve bought sats, click “Retry” to complete the action.',
@@ -553,7 +556,7 @@ function ensureStyle(cssText: string) {
   installedCss = cssText;
 }
 
-function overlayRoot(mount?: HTMLElement | null) {
+export function overlayRoot(mount?: HTMLElement | null) {
   const root = document.createElement("div");
   root.className = "bgo-overlay";
   (mount || document.body).appendChild(root);
@@ -561,12 +564,12 @@ function overlayRoot(mount?: HTMLElement | null) {
   return root;
 }
 
-function destroyOverlay(root: HTMLElement) {
+export function destroyOverlay(root: HTMLElement) {
   root.classList.remove('bgo-open');
   setTimeout(() => root.remove(), 200);
 }
 
-function renderCard(
+export function renderCard(
   root: HTMLElement,
   title: string,
   bodyHTML: string,
@@ -614,69 +617,7 @@ function showWalletUnavailableModal(
   renderCard(root, opts.title, `<p>${opts.message}</p>`, [link]);
 }
 
-async function showFundingModal(
-  opts: Required<FundingModalOptions>,
-  actionDescription?: string,
-  mount?: HTMLElement | null
-): Promise<'cancel' | 'retry'> {
-  if (!IN_BROWSER) return await Promise.resolve('cancel');
-  return await new Promise((resolve) => {
-    const root = overlayRoot(mount);
-    const buy = document.createElement('a');
-    buy.className = 'bgo-link';
-    buy.href = opts.buySatsUrl;
-    buy.target = '_blank';
-    buy.rel = 'noopener noreferrer';
-    buy.textContent = opts.buySatsText;
-    const cancel = document.createElement('button');
-    cancel.className = 'bgo-button secondary';
-    cancel.type = 'button';
-    cancel.textContent = opts.cancelText;
-
-    const desc = actionDescription
-      ? `<p class="bgo-small">Action: <strong>${escapeHtml(
-          actionDescription
-        )}</strong></p>`
-      : '';
-    const { body } = renderCard(
-      root,
-      opts.title,
-      `<p>${opts.introText}</p>${desc}`,
-      [buy, cancel]
-    );
-    let inRetry = false;
-    cancel.addEventListener('click', () => {
-      destroyOverlay(root);
-      resolve('cancel');
-    });
-    buy.addEventListener('click', (ev) => {
-      if (!inRetry) {
-        const url = opts.buySatsUrl;
-        if (
-          url &&
-          typeof window === 'object' &&
-          typeof window.open === 'function'
-        ) {
-          try {
-            window.open(url, '_blank', 'noopener,noreferrer');
-          } catch {}
-        }
-        ev.preventDefault();
-        inRetry = true;
-        buy.textContent = opts.retryText;
-        buy.removeAttribute('href');
-        buy.removeAttribute('target');
-        buy.removeAttribute('rel');
-        body.innerHTML = `<p>${opts.postPurchaseText}</p>${desc}`;
-      } else {
-        destroyOverlay(root);
-        resolve('retry');
-      }
-    });
-  });
-}
-
-function escapeHtml(s: string) {
+export function escapeHtml(s: string) {
   return s
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -965,41 +906,18 @@ export default class BabbageGo implements WalletInterface {
 
       return result;
     } catch (e) {
+      debugger;
       const hang = this.maybeHandleWalletConnectionError<CreateActionResult>(e);
       if (hang != null) return await hang;
 
       // Funding flow (only for INSUFFICIENT_FUNDS)
-      const code =
-        e && typeof e === 'object' && 'code' in e
-          ? String((e as { code?: string }).code)
-          : '';
-      const message = getErrorMessage(e);
-      const insufficientFundsDetected =
-        code === ERR.INSUFFICIENT_FUNDS ||
-        INSUFFICIENT_FUNDS_MESSAGE_PATTERN.test(message);
-      if (IN_BROWSER && this.options.showModal && insufficientFundsDetected) {
+      const err = isWERR_INSUFFICIENT_FUNDS(e);
+      if (err) {
         ensureStyle(this.options.design.cssText);
-        let neededSats: number | undefined;
-        {
-          const m1 = message.match(/(\d+)\s+more\s+satoshis\s+are\s+needed/i);
-          if (m1 != null) neededSats = Number(m1[1]);
-          else {
-            const m2 = message.match(/for a total of\s+(\d+)/i);
-            if (m2 != null) neededSats = Number(m2[1]);
-          }
-        }
-        const baseUrl = this.options.funding.buySatsUrl;
-        const computedBuyUrl =
-          neededSats && Number.isFinite(neededSats) && neededSats > 0
-            ? `${baseUrl}${
-                baseUrl.includes('?') ? '&' : '?'
-              }sats=${encodeURIComponent(String(neededSats))}&actionDescription=${encodeURIComponent(String(args.description))}`
-            : baseUrl;
         const choice = await showFundingModal(
-          {
-            ...this.options.funding,
-            buySatsUrl: computedBuyUrl,
-          } as Required<FundingModalOptions>,
+          this.base,
+          err,
+          this.options.funding,
           args.description,
           this.options.mount
         );
@@ -1290,3 +1208,10 @@ export default class BabbageGo implements WalletInterface {
     );
   }
 }
+
+function isWERR_INSUFFICIENT_FUNDS(e: unknown) : WERR_INSUFFICIENT_FUNDS | undefined {
+  if (e instanceof WERR_INSUFFICIENT_FUNDS) return e
+  if (e instanceof Error && e.name === 'WERR_INSUFFICIENT_FUNDS') return e as WERR_INSUFFICIENT_FUNDS
+  return undefined
+}
+
