@@ -1,5 +1,5 @@
 // showFundingModal.ts
-import { WalletInterface, WERR_INSUFFICIENT_FUNDS } from '@bsv/sdk';
+import { WalletInterface } from '@bsv/sdk';
 import {
   FundingModalOptions,
   IN_BROWSER,
@@ -8,7 +8,7 @@ import {
   renderCard,
   destroyOverlay
 } from './index.js';
-import { SatoshiShopClient } from 'satoshi-shop-client';
+import { SatoshiShopClient, StartShoppingResult } from 'satoshi-shop-client';
 
 const STRIPE_PK = 'pk_live_51KT9tpEUx5UhTr4kDuPQBpP5Sy8G5Xd4rsqWTQLVsXAeQGGrKhYZt8JgGCGSgi1NHnOWbxJNfCoMVh3a8F9iCYXf00U0lbWdDC';
 const SHOP_URL = 'https://satoshi-shop.babbage.systems';
@@ -39,13 +39,11 @@ export async function showFundingModal(
 
     const content = body.querySelector('#funding-content')! as HTMLElement;
 
-    // mutable state
+    let needed = satoshisNeeded;
     let stripe: any;
     let elements: any;
-    let limits: any = null;
-    let needed = satoshisNeeded;          // will be reduced when pending txs are processed
-    let pendingProcessed = 0;
-    let retryBtn: HTMLButtonElement;
+    let limits: StartShoppingResult | null = null;
+    let currentReference = '';
 
     const setContent = (html: string) => { content.innerHTML = html; };
 
@@ -67,27 +65,31 @@ export async function showFundingModal(
     const processPendingTxs = async () => {
       if (!limits?.pendingTxs?.length) return;
 
-      setContent('<p>Processing pending purchases…</p>');
-      for (const reference of limits.pendingTxs) {
+      setContent('<p>Processing previous purchases…</p>');
+
+      let recovered = 0;
+      for (const ref of limits.pendingTxs) {
         try {
-          const result = await shopClient.completeBuy({ reference });
+          const result = await shopClient.completeBuy({ reference: ref });
           if (result.satoshis) {
             needed = Math.max(0, needed - result.satoshis);
-            pendingProcessed += result.satoshis;
+            recovered += result.satoshis;
             setContent(content.innerHTML + `<p>Processed prior purchase of ${result.satoshis.toLocaleString()} satoshis.</p>`);
           } else {
-            setContent(content.innerHTML + `<p>Prior purchase with reference ${reference} is still pending.</p>`);
+            setContent(content.innerHTML + `<p>Prior purchase with reference ${ref} is still pending.</p>`);
           }
         } catch (e) {
-          setContent(content.innerHTML + `<p>Prior purchase with reference ${reference} could not be processed.</p>`);
-          console.warn(`Failed to process pending purchase reference ${reference}`, e);
+          setContent(content.innerHTML + `<p>Prior purchase with reference ${ref} could not be processed.</p>`);
+          console.warn('Failed to complete pending purchase', ref, e);
         }
       }
+
+      needed -= recovered;
     };
 
     const startShopping = async () => {
       try {
-        setContent('<p>Loading purchase limits…</p>');
+        setContent('<p>Loading purchase options…</p>');
         limits = await shopClient.startShopping({});
 
         await processPendingTxs();
@@ -97,8 +99,11 @@ export async function showFundingModal(
             <p style="color:#4caf50">
               You now have enough satoshis to ${escapeHtml(actionDescription || 'complete this action')}.
             </p>`);
-          retryBtn.disabled = false;
+          await new Promise(res => setTimeout(res, 2000));
+          destroyOverlay(root);
+          resolve('retry');
         }
+
         if (needed > limits.maximumSatoshis) {
           setContent(`
             <p style="color:#ff6b6b">
@@ -108,7 +113,10 @@ export async function showFundingModal(
               An additional ${needed.toLocaleString()} satoshis are required.
             </p>`);
         }
-        if (limits.maximumSatoshis === 0) {
+        
+        const countOfBuyOptions = renderAmountSelector();
+
+        if (countOfBuyOptions < 1) {
           setContent(`
             <p style="color:#ff6b6b">
               You are unable to purchase more satoshis at this time.
@@ -117,107 +125,121 @@ export async function showFundingModal(
           return;
         }
 
-        renderAmountSelector();
       } catch (e: any) {
-        setContent(`<p style="color:#ff6b6b">Failed to contact shop: ${escapeHtml(e.message)}</p>`);
+        setContent(`<p style="color:#ff6b6b">Connection failed: ${escapeHtml(e.message)}</p>`);
       }
     };
 
-    const renderAmountSelector = () => {
+    const renderAmountSelector = () : number => {
+      if (!limits) return 0;
       const rate = limits.satoshisPerUSD;
       const suggestions = [
         { usd: 1, sats: Math.ceil(1 * rate) },
         { usd: 2, sats: Math.ceil(2 * rate) },
         { usd: 5, sats: Math.ceil(5 * rate) },
         { usd: 10, sats: Math.ceil(10 * rate) }
-      ].filter(o => o.sats >= limits.minimumSatoshis && o.sats <= limits.maximumSatoshis)
-       .filter(o => needed <= 0 || o.sats >= needed);   // hide amounts that are useless when already funded
+      ].filter(o => o.sats >= limits!.minimumSatoshis && o.sats <= limits!.maximumSatoshis);
+
+      if (suggestions.length === 0) return 0;
 
       const optionalMsg = needed <= 0
-        ? '<p style="color:#4caf50;margin:12px 0;">You already have enough satoshis – buying more is optional.</p>'
+        ? '<p style="color:#4caf50;font-weight:600;">You already have enough satoshis – buying more is optional.</p>'
         : `<p>You need <strong>${needed.toLocaleString()}</strong> more satoshis.</p>`;
 
-      const validMinutes = Math.floor((new Date(limits.quoteValidUntil).getTime() - Date.now()) / 60000);
+      const validMinutes = Math.floor((limits!.quoteValidUntil!.getTime() - Date.now()) / 60000);
       setContent(`
         <div style="text-align:center;">
           ${optionalMsg}
           <p><strong>Choose an amount (rate of $1 for ${limits.satoshisPerUSD.toLocaleString()} valid for ${validMinutes} minutes):</strong></p>
-          <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin:20px 0;">
+          <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin:24px 0;">
             ${suggestions.map(o => `
               <button class="amount-btn" data-sats="${o.sats}" data-usd="${o.usd}"
-                style="padding:12px 20px;font-size:16px;border:2px solid #635BFF;background:#fff;color:#635BFF;border-radius:8px;cursor:pointer;min-width:90px;">
+                style="padding:14px 20px;font-size:16px;border:2px solid #635BFF;background:transparent;color:#635BFF;border-radius:12px;cursor:pointer;min-width:100px;transition:all .2s;">
                 $${o.usd}
               </button>
             `).join('')}
           </div>
 
-          <div id="card-element" style="display:none;margin:24px 0;">
-            <div style="border:1px solid #ddd;padding:16px;border-radius:8px;background:#f9f9f9;">
+          <div id="card-element" style="margin:30px auto;max-width:380px;display:none;">
+            <div style="border:1px solid #ddd;padding:20px;border-radius:12px;background:#fafafa;">
               <div id="card-input"></div>
-              <button id="submit-payment" disabled style="margin-top:16px;padding:12px;background:#635BFF;color:white;border:none;border-radius:8px;width:100%;font-size:16px;">
-                Pay $<span id="pay-amount">?</span>
-              </button>
+              <div id="payment-status" style="margin-top:16px;min-height:28px;font-size:15px;"></div>
             </div>
-            <div id="payment-status" style="margin-top:12px;min-height:24px;"></div>
           </div>
         </div>
       `);
 
-      document.querySelectorAll('.amount-btn').forEach(btn => {
+      document.querySelectorAll<HTMLButtonElement>('.amount-btn').forEach(btn => {
         btn.addEventListener('click', () => {
-          const sats = Number((btn as HTMLElement).dataset.sats);
-          const usd = Number((btn as HTMLElement).dataset.usd);
+          const sats = Number(btn.dataset.sats);
+          const usd = Number(btn.dataset.usd);
+
+          // Hide card element immediately on amount selection
+          content.querySelector<HTMLElement>('#card-element')!.style.display = 'none';
+
           initiatePurchase(sats, usd);
         });
       });
-    };
 
-    let currentReference = '';   // set by initiateBuy → used by finalizePurchase
+      return suggestions.length;
+    };
 
     const initiatePurchase = async (sats: number, usd: number) => {
       const statusEl = content.querySelector('#payment-status')!;
-      statusEl.textContent = 'Preparing secure payment…';
+      statusEl.textContent = 'Preparing payment…';
 
       try {
         const init = await shopClient.initiateBuy({
           numberOfSatoshis: sats,
-          quoteId: limits.quoteId!,
+          quoteId: limits!.quoteId!,
           customerAcceptsPaymentTerms: 'I Accept'
         });
 
-        currentReference = init.reference;   // ← crucial
+        currentReference = init.reference;
 
-        // show card element
-        content.querySelector<HTMLElement>('#card-element')!.style.display = 'block';
-        const payBtn = content.querySelector<HTMLButtonElement>('#submit-payment')!;
-        payBtn.querySelector('#pay-amount')!.textContent = usd.toFixed(2);
-        payBtn.disabled = false;
+        const cardEl = content.querySelector<HTMLElement>('#card-element')!;
+        cardEl.style.display = 'block';
+        statusEl.textContent = 'Enter card details below';
 
-        const card = elements.create('card', { style: { base: { fontSize: '16px' } } });
+        const card = elements.create('card', {
+          style: { base: { fontSize: '16px', lineHeight: '1.5' } }
+        });
         card.mount('#card-input');
 
-        payBtn.onclick = async () => {
-          payBtn.disabled = true;
-          payBtn.textContent = 'Processing…';
-          statusEl.textContent = 'Confirming payment with Stripe…';
+        const submitBtn = document.createElement('button');
+        submitBtn.id = 'submit-payment';
+        submitBtn.textContent = `Pay $${usd.toFixed(2)}`;
+        submitBtn.disabled = true;
+        submitBtn.style.cssText = 'margin-top:16px;padding:12px 20px;background:#635BFF;color:white;border:none;border-radius:8px;width:100%;font-size:16px;cursor:pointer;';
+        content.querySelector('#card-input')!.after(submitBtn);
+
+        card.on('change', (event: any) => {
+          submitBtn.disabled = !event.complete;
+        });
+
+        submitBtn.onclick = async () => {
+          submitBtn.disabled = true;
+          submitBtn.textContent = 'Processing…';
+          statusEl.textContent = 'Confirming with your bank…';
 
           const { error, paymentIntent } = await stripe.confirmCardPayment(init.clientSecret, {
             payment_method: { card }
           });
 
           if (error) {
-            statusEl.textContent = `Payment failed: ${error.message}`;
-            payBtn.disabled = false;
-            payBtn.textContent = `Pay $${usd.toFixed(2)}`;
+            statusEl.innerHTML = `<span style="color:#e74c3c;">${error.message}</span>`;
+            submitBtn.disabled = false;
+            submitBtn.textContent = `Pay $${usd.toFixed(2)}`;
             return;
           }
 
           if (paymentIntent?.status === 'succeeded') {
+            statusEl.innerHTML = '<span style="color:#4caf50;">Payment successful! Delivering satoshis…</span>';
             await finalizePurchase(currentReference);
           }
         };
       } catch (e: any) {
-        statusEl.textContent = `Error: ${e.message || 'Initiation failed'}`;
+        statusEl.innerHTML = `<span style="color:#e74c3c;">Error: ${escapeHtml(e.message)}</span>`;
       }
     };
 
@@ -227,38 +249,41 @@ export async function showFundingModal(
       const poll = async () => {
         try {
           const result = await shopClient.completeBuy({ reference });
-          if (result.status === 'bitcoin-payment-acknowledged') {
-            needed = Math.max(0, needed - (result.satoshis ?? 0));
-            statusEl.innerHTML = `<p style="color:green;">
-              Success! ${result.satoshis?.toLocaleString() ?? 'Some'} satoshis added.
+
+          if (result.status === 'bitcoin-payment-acknowledged' && result.satoshis) {
+            needed = Math.max(0, needed - result.satoshis);
+
+            statusEl.innerHTML = `<p style="color:#4caf50;font-weight:600;">
+              Success! +${result.satoshis.toLocaleString()} satoshis added
             </p>`;
 
             if (needed <= 0) {
-              retryBtn.disabled = false;
-            }
-
-            setTimeout(() => {
+              await new Promise(res => setTimeout(res, 2000));
               destroyOverlay(root);
               resolve('retry');
-            }, 2500);
+            } else {
+              setContent(`
+                <p style="color:#4caf50;font-weight:600;">
+                  Success! ${result.satoshis.toLocaleString()} satoshis added
+                </p>
+                <p>You now need <strong>${needed.toLocaleString()}</strong> more satoshis.</p>
+              `);
+              renderAmountSelector();
+            }
             return;
           }
 
-          // still processing → poll again
           statusEl.textContent = 'Delivering satoshis…';
           setTimeout(poll, 2000);
         } catch (e: any) {
-          statusEl.textContent = `Delivery error: ${e.message}`;
+          statusEl.innerHTML = `<span style="color:#e74c3c;">Delivery failed: ${e.message}</span>`;
         }
       };
 
-      statusEl.textContent = 'Payment confirmed – finalising…';
       poll();
     };
 
-    // ------------------------------------------------------------------ UI buttons
-    const actions = root.querySelector('.bgo-actions')!;
-
+    // Only Cancel button — no Retry button
     const cancelBtn = document.createElement('button');
     cancelBtn.className = 'bgo-button secondary';
     cancelBtn.textContent = opts.cancelText;
@@ -267,17 +292,7 @@ export async function showFundingModal(
       resolve('cancel');
     };
 
-    actions.appendChild(cancelBtn);
-
-    retryBtn = document.createElement('button');
-    retryBtn.className = 'bgo-button secondary';
-    retryBtn.textContent = opts.retryText;
-    retryBtn.disabled = true;
-    retryBtn.onclick = () => {
-      destroyOverlay(root);
-      resolve('retry');
-    };
-
+    const actions = root.querySelector('.bgo-actions')!;
     actions.appendChild(cancelBtn);
 
     root.addEventListener('click', (e) => {
@@ -287,7 +302,6 @@ export async function showFundingModal(
       }
     });
 
-    // ------------------------------------------------------------------ start
     loadStripe();
     startShopping();
   });

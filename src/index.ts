@@ -58,8 +58,9 @@ import {
   WERR_INSUFFICIENT_FUNDS
 } from '@bsv/sdk';
 import { MessageBoxClient } from '@bsv/message-box-client';
-import { showFundingModal } from './showFundingModal.js';
-export { showFundingModal } from './showFundingModal.js';
+import { showFundingModal as showSatoshiShopClientFundingModal } from './showSatoshiShopClientFundingModal.js';
+import { showExternalFundingModal } from './showExternalFundingModal.js';
+export { showFundingModal } from './showSatoshiShopClientFundingModal.js';
 
 // Base transaction fee, unmodifiable by developers
 const TRANSACTION_FEE = {
@@ -116,7 +117,28 @@ export interface FundingModalOptions {
   buySatsText?: string;
   retryText?: string;
   cancelText?: string;
-  buySatsUrl?: string; // default https://satoshis.babbage.systems
+  /**
+   * Optiona. If undefined, the default is external.
+   * 
+   * 'external' - open an external URL for buying sats (default).
+   * 'satoshiShopClient' - use the SatoshiShopClient integration to buy sats without leaving funding modal.
+   */
+  source?: 'external' | 'satoshiShopClient'
+  /**
+   * Optional. If using 'external' source, the URL to open for buying sats.
+   * Default is https://satoshis.babbage.systems
+   */
+  buySatsUrl?: string;
+  /**
+   * Optional. If using 'satoshiShopClient' source, the URL of the Satoshi Shop instance to use.
+   * Default is https://satoshi-shop.babbage.systems
+   */
+  satoshiShopUrl?: string;
+  /**
+   * Optional. public key if required by source.
+   * Default is 'pk_live_51KT9tpEUx5UhTr4kDuPQBpP5Sy8G5Xd4rsqWTQLVsXAeQGGrKhYZt8JgGCGSgi1NHnOWbxJNfCoMVh3a8F9iCYXf00U0lbWdDC'
+   */
+  satoshiShopPubKey?: string;
 }
 
 export interface MonetizationOptions {
@@ -203,14 +225,17 @@ const DEFAULT_WALLET_UNAVAILABLE: Required<WalletUnavailableModalOptions> = {
 };
 
 const DEFAULT_FUNDING: Required<FundingModalOptions> = {
-  title: 'Not enough sats 2',
+  title: 'Not enough sats',
   introText: 'Top up your wallet, then click “Retry” to finish the action.',
   postPurchaseText:
     'If you’ve bought sats, click “Retry” to complete the action.',
   buySatsText: 'Buy Sats',
   retryText: 'Retry',
   cancelText: 'Cancel Action',
+  source: 'external',
   buySatsUrl: 'https://satoshis.babbage.systems',
+  satoshiShopUrl: 'https://satoshi-shop.babbage.systems',
+  satoshiShopPubKey: 'pk_live_51KT9tpEUx5UhTr4kDuPQBpP5Sy8G5Xd4rsqWTQLVsXAeQGGrKhYZt8JgGCGSgi1NHnOWbxJNfCoMVh3a8F9iCYXf00U0lbWdDC',
 };
 
 const BUTTON_RADIUS_BY_SHAPE: Record<ButtonShape, string> = {
@@ -521,6 +546,9 @@ function resolveFundingOptions(
     buySatsText: overrides?.buySatsText ?? DEFAULT_FUNDING.buySatsText,
     retryText: overrides?.retryText ?? DEFAULT_FUNDING.retryText,
     cancelText: overrides?.cancelText ?? DEFAULT_FUNDING.cancelText,
+    source: overrides?.source ?? DEFAULT_FUNDING.source,
+    satoshiShopUrl: overrides?.satoshiShopUrl ?? DEFAULT_FUNDING.satoshiShopUrl,
+    satoshiShopPubKey: overrides?.satoshiShopPubKey ?? DEFAULT_FUNDING.satoshiShopPubKey,
     buySatsUrl: overrides?.buySatsUrl ?? DEFAULT_FUNDING.buySatsUrl,
   };
 }
@@ -914,13 +942,32 @@ export default class BabbageGo implements WalletInterface {
       const err = isWERR_INSUFFICIENT_FUNDS(e);
       if (err) {
         ensureStyle(this.options.design.cssText);
-        const choice = await showFundingModal(
-          this.base,
-          err.moreSatoshisNeeded,
-          this.options.funding,
-          args.description,
-          this.options.mount
-        );
+        let choice: 'retry' | 'cancel' = 'cancel';
+        let fos = this.options.funding;
+        if (fos.source === 'satoshiShopClient') {
+          choice = await showSatoshiShopClientFundingModal(
+            this.base,
+            err.moreSatoshisNeeded,
+            this.options.funding,
+            args.description,
+            this.options.mount
+          );
+        } else {
+          const neededSats = err.moreSatoshisNeeded;
+          const baseUrl = this.options.funding.buySatsUrl;
+          const computedBuyUrl =
+            neededSats && Number.isFinite(neededSats) && neededSats > 0
+              ? `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}sats=${encodeURIComponent(String(neededSats))}&actionDescription=${encodeURIComponent(String(args.description))}`
+              : baseUrl;
+          choice = await showExternalFundingModal(
+            {
+              ...this.options.funding,
+              buySatsUrl: computedBuyUrl,
+            } as Required<FundingModalOptions>,
+            args.description,
+            this.options.mount
+          );
+        }
         if (choice === 'retry') {
           // single transparent retry; surface result or throw as-is
           return await this.createAction(args, origin);

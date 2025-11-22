@@ -1,7 +1,7 @@
 import { rename, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
-for (const file of ['index', 'showFundingModal']) {
+for (const file of ['index', 'showSatoshiShopClientFundingModal', 'showExternalFundingModal']) {
   const from = join('dist', 'cjs', `${file}.js`)
   const to = join('dist', 'cjs', `${file}.cjs`)
 
