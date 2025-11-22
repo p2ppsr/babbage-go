@@ -69,31 +69,48 @@ const wallet = new BabbageGo(undefined, {
 })
 ```
 
-### 3. Brand-tuned tokens & custom CSS
+### 3. brand-tuned tokens & custom css
 
 ```ts
-const wallet = new BabbageGo(undefined, {
+const wallet = new babbagego(undefined, {
   design: {
-    preset: 'midnightHalo',
+    preset: 'midnighthalo',
     tokens: {
-      accentBackground: 'linear-gradient(135deg, #FF6FDB, #855CFF)',
-      accentText: '#080814',
-      accentHoverBackground: '#FFE8F9',
-      accentHoverText: '#320845',
-      buttonShape: 'pill',
-      cardRadius: '32px',
+      accentbackground: 'linear-gradient(135deg, #ff6fdb, #855cff)',
+      accenttext: '#080814',
+      accenthoverbackground: '#ffe8f9',
+      accenthovertext: '#320845',
+      buttonshape: 'pill',
+      cardradius: '32px',
     },
-    customCss: `
+    customcss: `
       .bgo-card {
         border-width: 2px;
         animation: bgo-fade 320ms ease;
       }
       @keyframes bgo-fade {
-        from { transform: translateY(12px); opacity: 0; }
-        to { transform: translateY(0); opacity: 1; }
+        from { transform: translatey(12px); opacity: 0; }
+        to { transform: translatey(0); opacity: 1; }
       }
     `,
   },
+})
+```
+
+### 4. Babbage todo-ts Application With SatoshiShopClient Funding Integration
+
+```ts
+const wallet = new babbagego(undefined, {
+  monetization: {
+    developerIdentity: '02a0647.....1149ea1291d1a73783d1b7b3a7a220',
+    developerFeeSats: 300
+  },
+  funding: {
+    title: 'More Satoshis Needed',
+    introText: 'Satoshis are needed perform this action, or you can cancel it.',
+    buySatsText: 'Buy Satoshis',
+    source: 'satoshiShopClient'
+  }
 })
 ```
 
