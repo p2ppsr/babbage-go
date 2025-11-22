@@ -1,4 +1,4 @@
-// showFundingModal.ts
+// showSatoshiShopClientFundingModal.ts
 import { WalletInterface } from '@bsv/sdk';
 import {
   FundingModalOptions,
@@ -160,12 +160,16 @@ export async function showFundingModal(
             `).join('')}
           </div>
 
+          <!-- Stripe card element (hidden until amount selected) -->
           <div id="card-element" style="margin:30px auto;max-width:380px;display:none;">
             <div style="border:1px solid #ddd;padding:20px;border-radius:12px;background:#fafafa;">
               <div id="card-input"></div>
-              <div id="payment-status" style="margin-top:16px;min-height:28px;font-size:15px;"></div>
+              <div id="card-errors" role="alert" style="color:#e74c3c;margin-top:12px;min-height:24px;"></div>
             </div>
           </div>
+
+          <!-- Status messages appear here, outside Stripe UI -->
+          <div id="payment-status" style="margin-top:20px;min-height:32px;font-size:16px;"></div>
         </div>
       `);
 
@@ -186,6 +190,7 @@ export async function showFundingModal(
 
     const initiatePurchase = async (sats: number, usd: number) => {
       const statusEl = content.querySelector('#payment-status')!;
+      const cardErrorsEl = content.querySelector('#card-errors')!;
       statusEl.textContent = 'Preparing payment…';
 
       try {
@@ -202,9 +207,19 @@ export async function showFundingModal(
         statusEl.textContent = 'Enter card details below';
 
         const card = elements.create('card', {
+          hidePostalCode: false,
           style: { base: { fontSize: '16px', lineHeight: '1.5' } }
         });
         card.mount('#card-input');
+
+        // Real-time validation feedback
+        card.on('change', (event: any) => {
+          if (event.error) {
+            cardErrorsEl.textContent = event.error.message;
+          } else {
+            cardErrorsEl.textContent = '';
+          }
+        });
 
         const submitBtn = document.createElement('button');
         submitBtn.id = 'submit-payment';
@@ -222,11 +237,14 @@ export async function showFundingModal(
           submitBtn.textContent = 'Processing…';
           statusEl.textContent = 'Confirming with your bank…';
 
+          cardEl.style.display = 'none';
+
           const { error, paymentIntent } = await stripe.confirmCardPayment(init.clientSecret, {
             payment_method: { card }
           });
 
           if (error) {
+            cardEl.style.display = 'block';
             statusEl.innerHTML = `<span style="color:#e74c3c;">${error.message}</span>`;
             submitBtn.disabled = false;
             submitBtn.textContent = `Pay $${usd.toFixed(2)}`;
