@@ -916,7 +916,7 @@ export default class BabbageGo implements WalletInterface {
         ensureStyle(this.options.design.cssText);
         const choice = await showFundingModal(
           this.base,
-          err,
+          err.moreSatoshisNeeded,
           this.options.funding,
           args.description,
           this.options.mount
