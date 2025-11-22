@@ -150,7 +150,7 @@ export async function showFundingModal(
       setContent(`
         <div style="text-align:center;">
           ${optionalMsg}
-          <p><strong>Choose an amount (rate of $1 for ${limits.satoshisPerUSD.toLocaleString()} valid for ${validMinutes} minutes):</strong></p>
+          <p><strong>Choose an amount (rate of $1 for ${Math.floor(limits.satoshisPerUSD).toLocaleString()} valid for ${validMinutes} minutes):</strong></p>
           <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin:24px 0;">
             ${suggestions.map(o => `
               <button class="amount-btn" data-sats="${o.sats}" data-usd="${o.usd}"
