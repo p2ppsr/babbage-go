@@ -46,6 +46,6 @@
   },
   "dependencies": {
     "@bsv/message-box-client": "^1.4.3",
-    "satoshi-shop-client": "^2.0.3"
+    "satoshi-shop-client": "^2.0.4"
   }
 }

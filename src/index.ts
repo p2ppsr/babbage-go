@@ -118,7 +118,7 @@ export interface FundingModalOptions {
   retryText?: string;
   cancelText?: string;
   /**
-   * Optiona. If undefined, the default is external.
+   * Optional. If undefined, the default is external.
    * 
    * 'external' - open an external URL for buying sats (default).
    * 'satoshiShopClient' - use the SatoshiShopClient integration to buy sats without leaving funding modal.
