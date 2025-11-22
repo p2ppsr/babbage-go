@@ -934,7 +934,6 @@ export default class BabbageGo implements WalletInterface {
 
       return result;
     } catch (e) {
-      debugger;
       const hang = this.maybeHandleWalletConnectionError<CreateActionResult>(e);
       if (hang != null) return await hang;
 
