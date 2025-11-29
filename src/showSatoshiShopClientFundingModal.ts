@@ -10,9 +10,6 @@ import {
 } from './index.js';
 import { SatoshiShopClient, StartShoppingResult } from 'satoshi-shop-client';
 
-const STRIPE_PK = 'pk_live_51KT9tpEUx5UhTr4kDuPQBpP5Sy8G5Xd4rsqWTQLVsXAeQGGrKhYZt8JgGCGSgi1NHnOWbxJNfCoMVh3a8F9iCYXf00U0lbWdDC';
-const SHOP_URL = 'https://satoshi-shop.babbage.systems';
-
 export async function showFundingModal(
   wallet: WalletInterface,
   satoshisNeeded: number,
@@ -20,271 +17,421 @@ export async function showFundingModal(
   actionDescription?: string,
   mount?: HTMLElement | null,
 ): Promise<'cancel' | 'retry'> {
+
   if (!IN_BROWSER) return 'cancel';
 
-  const shopClient = new SatoshiShopClient(wallet, SHOP_URL);
+  const shopClient = new SatoshiShopClient(wallet, opts.satoshiShopUrl);
 
   return new Promise<'cancel' | 'retry'>((resolve) => {
-    const root = overlayRoot(mount);
-    const desc = actionDescription
-      ? `<p class="bgo-small">Action: <strong>${escapeHtml(actionDescription)}</strong></p>`
-      : '';
 
-    const { body } = renderCard(
-      root,
-      opts.title,
-      `<p>${opts.introText}</p>${desc}<div id="funding-content"></div>`,
-      []
-    );
+    const ctx = setupContext()
 
-    const content = body.querySelector('#funding-content')! as HTMLElement;
+    shop();
 
-    let needed = satoshisNeeded;
-    let stripe: any;
-    let elements: any;
-    let limits: StartShoppingResult | null = null;
-    let currentReference = '';
+    function setupContext() : FundingModalContext {
+      const root = overlayRoot(mount);
+      const cancel = () => { destroyOverlay(root); resolve('cancel'); }
+      const retry = () => { destroyOverlay(root); resolve('retry'); }
 
-    const setContent = (html: string) => { content.innerHTML = html; };
+      const desc = actionDescription
+        ? `<p class="bgo-small">Action: <strong>${escapeHtml(actionDescription)}</strong></p>`
+        : '';
 
-    const loadStripe = () => {
-      if ((window as any).Stripe) {
-        stripe = (window as any).Stripe(STRIPE_PK);
-        elements = stripe.elements();
-        return;
-      }
-      const script = document.createElement('script');
-      script.src = 'https://js.stripe.com/v3/';
-      script.onload = () => {
-        stripe = (window as any).Stripe(STRIPE_PK);
-        elements = stripe.elements();
+      const { body } = renderCard(
+        root,
+        opts.title,
+        `${desc}<div id="funding-content"></div>`,
+        []
+      );
+
+      const content = body.querySelector('#funding-content')! as HTMLDivElement;
+
+      // Only Cancel button — no Retry button
+      const cancelBtn = document.createElement('button');
+      cancelBtn.className = 'bgo-button secondary';
+      cancelBtn.textContent = opts.cancelText;
+      cancelBtn.onclick = cancel;
+
+      const actions = root.querySelector('.bgo-actions')!;
+      actions.appendChild(cancelBtn);
+
+      root.addEventListener('click', (e) => {
+        if (e.target === root) {
+          destroyOverlay(root);
+          resolve('cancel');
+        }
+      });
+
+      const ctx: FundingModalContext = {
+        root,
+        cancel,
+        retry,
+        delay: () => new Promise(res => setTimeout(res, 2000)),
+        desc,
+        body,
+        content,
+        cancelBtn,
+        setContent: (html: string) => { content.innerHTML = html; },
+        stripe: null,
+        elements: null,
+        ssr: null,
+        currentReference: '',
+        needed: satoshisNeeded,
+        buyOptions: []
       };
-      document.head.appendChild(script);
+
+      return ctx;
+    }
+
+    async function shop() : Promise<void> {
+      const loadStripePromise = loadStripe();
+
+      try {
+        ctx.setContent('<p>Contacting the Satoshi Shop…</p>');
+
+        ctx.ssr = await shopClient.startShopping({});
+
+        await processPendingTxs();
+
+        if (ctx.needed <= 0)
+          return;
+
+        await determineBuyOptions();
+
+        if (ctx.buyOptions.length < 1)
+          return;
+
+        // We will be shopping, make sure stripe is loaded and valid.
+        await loadStripePromise;
+        
+        renderAmountSelector();
+
+      } catch (e: any) {
+        ctx.setContent(`<p style="color:#ff6b6b">An error occurred: ${escapeHtml(e.message)}</p>`);
+        await ctx.delay();
+        ctx.cancel();
+      }
     };
 
-    const processPendingTxs = async () => {
-      if (!limits?.pendingTxs?.length) return;
+    async function loadStripe() : Promise<void> {
+      const setStripe = () => {
+        ctx.stripe = (window as any).Stripe(opts.satoshiShopPubKey);
+        ctx.elements = ctx.stripe.elements();
+      }
 
-      setContent('<p>Processing previous purchases…</p>');
+      if ((window as any).Stripe) {
+        setStripe();
+        return;
+      }
+
+      return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'https://js.stripe.com/v3/';
+        script.onerror = () => { reject(new Error(`Failed to load ${script.src}`)); };
+        script.onload = () => {
+          setStripe();
+          resolve();
+        };
+        document.head.appendChild(script);
+      });
+    };
+
+    async function processPendingTxs() : Promise<void> {
+      if (!ctx.ssr?.pendingTxs?.length) return;
+
+      ctx.setContent('<p>Processing previous purchases…</p>');
 
       let recovered = 0;
-      for (const ref of limits.pendingTxs) {
+      for (const ref of ctx.ssr.pendingTxs) {
         try {
           const result = await shopClient.completeBuy({ reference: ref });
           if (result.satoshis) {
-            needed = Math.max(0, needed - result.satoshis);
+            ctx.needed -= result.satoshis;
             recovered += result.satoshis;
-            setContent(content.innerHTML + `<p>Processed prior purchase of ${result.satoshis.toLocaleString()} satoshis.</p>`);
+            ctx.setContent(ctx.content.innerHTML + `<p>Processed prior purchase of ${result.satoshis.toLocaleString()} satoshis.</p>`);
           } else {
-            setContent(content.innerHTML + `<p>Prior purchase with reference ${ref} is still pending.</p>`);
+            ctx.setContent(ctx.content.innerHTML + `<p>Prior purchase with reference ${ref} is still pending.</p>`);
           }
         } catch (e) {
-          setContent(content.innerHTML + `<p>Prior purchase with reference ${ref} could not be processed.</p>`);
+          ctx.setContent(ctx.content.innerHTML + `<p>Prior purchase with reference ${ref} could not be processed.</p>`);
           console.warn('Failed to complete pending purchase', ref, e);
         }
       }
 
-      needed -= recovered;
-    };
+      if (ctx.needed <= 0) {
+        ctx.setContent(ctx.content.innerHTML +`<p style="color:#4caf50">The action will be retried in a moment. </p>`);
+      }
 
-    const startShopping = async () => {
-      try {
-        setContent('<p>Loading purchase options…</p>');
-        limits = await shopClient.startShopping({});
+      // If there were pending transactions, always pause briefly to let user read messages before replacing content.
+      await ctx.delay();
 
-        await processPendingTxs();
-
-        if (needed <= 0) {
-          setContent(`
-            <p style="color:#4caf50">
-              You now have enough satoshis to ${escapeHtml(actionDescription || 'complete this action')}.
-            </p>`);
-          await new Promise(res => setTimeout(res, 2000));
-          destroyOverlay(root);
-          resolve('retry');
-        }
-
-        if (needed > limits.maximumSatoshis) {
-          setContent(`
-            <p style="color:#ff6b6b">
-              Your current limit of ${limits.maximumSatoshis.toLocaleString()} satoshis prevents you from being able to retry this action.
-              Please pursue other funding options for your wallet.
-            </p><p>
-              An additional ${needed.toLocaleString()} satoshis are required.
-            </p>`);
-        }
-        
-        const countOfBuyOptions = renderAmountSelector();
-
-        if (countOfBuyOptions < 1) {
-          setContent(`
-            <p style="color:#ff6b6b">
-              You are unable to purchase more satoshis at this time.
-              Please pursue other funding options for your wallet.
-            </p>`);
-          return;
-        }
-
-      } catch (e: any) {
-        setContent(`<p style="color:#ff6b6b">Connection failed: ${escapeHtml(e.message)}</p>`);
+      if (ctx.needed <= 0) {
+        ctx.retry();
       }
     };
 
-    const renderAmountSelector = () : number => {
-      if (!limits) return 0;
-      const rate = limits.satoshisPerUSD;
-      const suggestions = [
-        { usd: 1, sats: Math.ceil(1 * rate) },
-        { usd: 2, sats: Math.ceil(2 * rate) },
-        { usd: 5, sats: Math.ceil(5 * rate) },
-        { usd: 10, sats: Math.ceil(10 * rate) }
-      ].filter(o => o.sats >= limits!.minimumSatoshis && o.sats <= limits!.maximumSatoshis);
+    async function determineBuyOptions() : Promise<void> {
+      if (!ctx.ssr) return;
 
-      if (suggestions.length === 0) return 0;
+      const rate = ctx.ssr.satoshisPerUSD;
 
-      const optionalMsg = needed <= 0
-        ? '<p style="color:#4caf50;font-weight:600;">You already have enough satoshis – buying more is optional.</p>'
-        : `<p>You need <strong>${needed.toLocaleString()}</strong> more satoshis.</p>`;
+      const bos = [
+        { usd: 1, sats: Math.round(1 * rate) },
+        { usd: 2, sats: Math.round(2 * rate) },
+        { usd: 5, sats: Math.round(5 * rate) },
+        { usd: 10, sats: Math.round(10 * rate) }
+      ].filter(o => o.sats >= ctx.ssr!.minimumSatoshis && o.sats <= ctx.ssr!.maximumSatoshis);
 
-      const validMinutes = Math.floor((limits!.quoteValidUntil!.getTime() - Date.now()) / 60000);
-      setContent(`
+      // Even if user can't buy enough to cover needed, always show largest purchase option within their current limits,
+      // but remove smaller options if they don't cover the needed amount.
+      while (bos.length > 1 && bos[0].sats < ctx.needed)
+        bos.shift();
+
+      ctx.buyOptions = bos;
+
+      if (ctx.buyOptions.length === 0) {
+        ctx.setContent(`
+          <p>You have reached your current purchase limits.</p>
+          <p>Please try this action again tomorrow or seek other funding options.</p>
+          `);
+        await ctx.delay()
+        ctx.cancel();
+      }
+    }
+
+    async function renderAmountSelector() : Promise<void> {
+      const validMinutes = Math.floor((ctx.ssr!.quoteValidUntil!.getTime() - Date.now()) / 60000);
+      ctx.setContent(`
         <div style="text-align:center;">
-          ${optionalMsg}
-          <p><strong>Choose an amount (rate of $1 for ${Math.floor(limits.satoshisPerUSD).toLocaleString()} valid for ${validMinutes} minutes):</strong></p>
-          <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin:24px 0;">
-            ${suggestions.map(o => `
-              <button class="amount-btn" data-sats="${o.sats}" data-usd="${o.usd}"
-                style="padding:14px 20px;font-size:16px;border:2px solid #635BFF;background:transparent;color:#635BFF;border-radius:12px;cursor:pointer;min-width:100px;transition:all .2s;">
-                $${o.usd}
-              </button>
-            `).join('')}
-          </div>
-
-          <!-- Stripe card element (hidden until amount selected) -->
-          <div id="card-element" style="margin:30px auto;max-width:380px;display:none;">
-            <div style="border:1px solid #ddd;padding:20px;border-radius:12px;background:#fafafa;">
-              <div id="card-input"></div>
-              <div id="card-errors" role="alert" style="color:#e74c3c;margin-top:12px;min-height:24px;"></div>
+          <!-- Required buying option choice: -->
+          <div id="buy-options">
+            <p>You need <strong>${ctx.needed.toLocaleString()}</strong> more satoshis.</p>
+            <p><strong>Choose an amount (rate of $1 for ${Math.round(ctx.ssr!.satoshisPerUSD).toLocaleString()} valid for ${validMinutes} minutes):</strong></p>
+            <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin:24px 0;">
+              ${ctx.buyOptions.map(o => `
+                <button class="amount-btn" data-sats="${o.sats}" data-usd="${o.usd}"
+                  style="padding:14px 20px;font-size:16px;border:2px solid #635BFF;background:transparent;color:#635BFF;border-radius:12px;cursor:pointer;min-width:100px;transition:all .2s;">
+                  $${o.usd}
+                </button>
+              `).join('')}
             </div>
           </div>
 
-          <!-- Status messages appear here, outside Stripe UI -->
-          <div id="payment-status" style="margin-top:20px;min-height:32px;font-size:16px;"></div>
+          <div id="payment-info" style="display:none;">
+            <p id="purchase-details">Buying xxx satoshis for $yyy:</p>
+            <!-- Stripe card element (hidden until amount selected) -->
+            <div id="card-element" style="margin:30px auto;max-width:380px;">
+              <div style="border:1px solid #ddd;padding:20px;border-radius:12px;background:#fafafa;">
+                <div id="card-input"></div>
+                <div id="card-errors" role="alert" style="color:#e74c3c;margin-top:12px;min-height:24px;"></div>
+              </div>
+            </div>
+
+            <!-- Status messages appear here, outside Stripe UI -->
+            <div id="payment-status" style="margin-top:20px;min-height:32px;font-size:16px;"></div>
+          </div>
         </div>
       `);
 
-      document.querySelectorAll<HTMLButtonElement>('.amount-btn').forEach(btn => {
+      ctx.content.querySelectorAll<HTMLButtonElement>('.amount-btn').forEach(btn => {
         btn.addEventListener('click', () => {
           const sats = Number(btn.dataset.sats);
           const usd = Number(btn.dataset.usd);
 
-          // Hide card element immediately on amount selection
-          content.querySelector<HTMLElement>('#card-element')!.style.display = 'none';
-
-          initiatePurchase(sats, usd);
+          clickBuyOption(sats, usd);
         });
+
       });
+    }
 
-      return suggestions.length;
-    };
+    async function clickBuyOption(sats: number, usd: number): Promise<void> {
+      const buyOptionsDiv = ctx.content.querySelector('#buy-options') as HTMLDivElement;
+      if (buyOptionsDiv) {
+        buyOptionsDiv.style.display = 'none';
+      }
 
-    const initiatePurchase = async (sats: number, usd: number) => {
-      const statusEl = content.querySelector('#payment-status')!;
-      const cardErrorsEl = content.querySelector('#card-errors')!;
+      const purchaseDetails = ctx.content.querySelector('#purchase-details') as HTMLElement;
+      if (purchaseDetails) {
+        purchaseDetails.textContent = `Buying ${sats.toLocaleString()} satoshis for $${usd.toFixed(0)}:`;
+      }
+
+      initiatePurchase(sats, usd);
+    }
+
+    async function initiatePurchase(sats: number, usd: number) : Promise<void> {
+      const statusEl = ctx.content.querySelector('#payment-status')!;
+      const cardErrorsEl = ctx.content.querySelector('#card-errors')!;
       statusEl.textContent = 'Preparing payment…';
 
       try {
         const init = await shopClient.initiateBuy({
           numberOfSatoshis: sats,
-          quoteId: limits!.quoteId!,
+          quoteId: ctx.ssr!.quoteId!,
           customerAcceptsPaymentTerms: 'I Accept'
         });
 
-        currentReference = init.reference;
+        ctx.currentReference = init.reference;
 
-        const cardEl = content.querySelector<HTMLElement>('#card-element')!;
+        const cardEl = ctx.content.querySelector<HTMLElement>('#card-element')!;
         cardEl.style.display = 'block';
-        statusEl.textContent = 'Enter card details below';
+        statusEl.textContent = 'Enter card details above.';
 
-        const card = elements.create('card', {
-          hidePostalCode: false,
+        // --- NEW: Use separate elements so postal code is always visible ---
+        const cardNumber = ctx.elements.create('cardNumber', {
           style: { base: { fontSize: '16px', lineHeight: '1.5' } }
         });
-        card.mount('#card-input');
-
-        // Real-time validation feedback
-        card.on('change', (event: any) => {
-          if (event.error) {
-            cardErrorsEl.textContent = event.error.message;
-          } else {
-            cardErrorsEl.textContent = '';
-          }
+        const cardExpiry = ctx.elements.create('cardExpiry', {
+          style: { base: { fontSize: '16px', lineHeight: '1.5' } }
         });
+        const cardCvc = ctx.elements.create('cardCvc', {
+          style: { base: { fontSize: '16px', lineHeight: '1.5' } }
+        });
+        const postalCode = ctx.elements.create('postalCode', {
+          style: { base: { fontSize: '16px', lineHeight: '1.5' } }
+        });
+
+        // Clear previous mounts
+        const inputContainer = ctx.content.querySelector('#card-input')!;
+        inputContainer.innerHTML = '';
+
+        cardNumber.mount(inputContainer.appendChild(document.createElement('div')));
+        cardExpiry.mount(inputContainer.appendChild(document.createElement('div')));
+        cardCvc.mount(inputContainer.appendChild(document.createElement('div')));
+        postalCode.mount(inputContainer.appendChild(document.createElement('div')));
 
         const submitBtn = document.createElement('button');
         submitBtn.id = 'submit-payment';
         submitBtn.textContent = `Pay $${usd.toFixed(2)}`;
         submitBtn.disabled = true;
         submitBtn.style.cssText = 'margin-top:16px;padding:12px 20px;background:#635BFF;color:white;border:none;border-radius:8px;width:100%;font-size:16px;cursor:pointer;';
-        content.querySelector('#card-input')!.after(submitBtn);
+        inputContainer.after(submitBtn);
 
-        card.on('change', (event: any) => {
-          submitBtn.disabled = !event.complete;
+        const updatePayButton = () => {
+          const allComplete =
+            cardNumber._complete &&
+            cardExpiry._complete &&
+            cardCvc._complete &&
+            postalCode._complete;
+          submitBtn.disabled = !allComplete;
+        };
+
+        cardNumber.on('change', updatePayButton);
+        cardExpiry.on('change', updatePayButton);
+        cardCvc.on('change', updatePayButton);
+        postalCode.on('change', updatePayButton);
+        updatePayButton(); // initial state
+
+        // Real-time validation
+        [cardNumber, cardExpiry, cardCvc, postalCode].forEach(el => {
+          el.on('change', (event: any) => {
+            if (event.error) {
+              cardErrorsEl.textContent = event.error.message;
+            } else if (!event.complete) {
+              // Optional: show incomplete hint
+            } else {
+              cardErrorsEl.textContent = '';
+            }
+          });
         });
+
+        // Enable button only when all fields are complete
+        const updateButton = () => {
+          const complete = cardNumber._complete && cardExpiry._complete && cardCvc._complete && postalCode._complete;
+          submitBtn.disabled = !complete;
+        };
+        [cardNumber, cardExpiry, cardCvc, postalCode].forEach(el => el.on('change', updateButton));
 
         submitBtn.onclick = async () => {
           submitBtn.disabled = true;
           submitBtn.textContent = 'Processing…';
           statusEl.textContent = 'Confirming with your bank…';
 
-          cardEl.style.display = 'none';
+          const fields = [
+            { element: cardNumber, name: 'card number' },
+            { element: cardExpiry, name: 'expiration date' },
+            { element: cardCvc, name: 'security code' },
+            { element: postalCode, name: 'postal code' }
+          ];
 
-          const { error, paymentIntent } = await stripe.confirmCardPayment(init.clientSecret, {
-            payment_method: { card }
+          let hasError = false;
+          for (const field of fields) {
+            if (field.element._empty) {
+              cardErrorsEl.textContent = `Your ${field.name} is incomplete.`;
+              hasError = true;
+            } else if (field.element._invalid) {
+              cardErrorsEl.textContent = field.element._error?.message || `Your ${field.name} is invalid.`;
+              hasError = true;
+            }
+          }
+
+          if (hasError) {
+            cardEl.style.display = 'block';
+            statusEl.textContent = '';
+            submitBtn.disabled = false;
+            submitBtn.textContent = `Pay $${usd.toFixed(0)}`;
+            return;
+          }
+
+          cardEl.style.display = 'none';  // ← status now appears outside Stripe UI
+
+          const { error, paymentIntent } = await ctx.stripe.confirmCardPayment(init.clientSecret, {
+            payment_method: {
+              card: cardNumber,
+              billing_details: {
+                address: { postal_code: (postalCode as any).getValue?.() || '' }
+              }
+            }
           });
 
           if (error) {
             cardEl.style.display = 'block';
-            statusEl.innerHTML = `<span style="color:#e74c3c;">${error.message}</span>`;
+            cardErrorsEl.textContent = error.message || 'Payment failed.';
+            statusEl.textContent = '';
             submitBtn.disabled = false;
-            submitBtn.textContent = `Pay $${usd.toFixed(2)}`;
+            submitBtn.textContent = `Pay $${usd.toFixed(0)}`;
             return;
           }
 
           if (paymentIntent?.status === 'succeeded') {
             statusEl.innerHTML = '<span style="color:#4caf50;">Payment successful! Delivering satoshis…</span>';
-            await finalizePurchase(currentReference);
+            await finalizePurchase(ctx.currentReference);
           }
         };
+
+        const paymentInfoDiv = ctx.content.querySelector('#payment-info') as HTMLDivElement;
+        if (paymentInfoDiv) {
+          paymentInfoDiv.style.display = 'block';
+        }
+
       } catch (e: any) {
         statusEl.innerHTML = `<span style="color:#e74c3c;">Error: ${escapeHtml(e.message)}</span>`;
       }
     };
 
-    const finalizePurchase = async (reference: string) => {
-      const statusEl = content.querySelector('#payment-status')!;
+    async function finalizePurchase(reference: string) : Promise<void> {
+      const statusEl = ctx.content.querySelector('#payment-status')!;
 
       const poll = async () => {
         try {
           const result = await shopClient.completeBuy({ reference });
 
           if (result.status === 'bitcoin-payment-acknowledged' && result.satoshis) {
-            needed = Math.max(0, needed - result.satoshis);
+            ctx.needed = Math.max(0, ctx.needed - result.satoshis);
 
             statusEl.innerHTML = `<p style="color:#4caf50;font-weight:600;">
               Success! +${result.satoshis.toLocaleString()} satoshis added
             </p>`;
 
-            if (needed <= 0) {
+            if (ctx.needed <= 0) {
               await new Promise(res => setTimeout(res, 2000));
-              destroyOverlay(root);
+              destroyOverlay(ctx.root);
               resolve('retry');
             } else {
-              setContent(`
+              ctx.setContent(`
                 <p style="color:#4caf50;font-weight:600;">
                   Success! ${result.satoshis.toLocaleString()} satoshis added
                 </p>
-                <p>You now need <strong>${needed.toLocaleString()}</strong> more satoshis.</p>
+                <p>You now need <strong>${ctx.needed.toLocaleString()}</strong> more satoshis.</p>
               `);
               renderAmountSelector();
             }
@@ -301,26 +448,74 @@ export async function showFundingModal(
       poll();
     };
 
-    // Only Cancel button — no Retry button
-    const cancelBtn = document.createElement('button');
-    cancelBtn.className = 'bgo-button secondary';
-    cancelBtn.textContent = opts.cancelText;
-    cancelBtn.onclick = () => {
-      destroyOverlay(root);
-      resolve('cancel');
-    };
-
-    const actions = root.querySelector('.bgo-actions')!;
-    actions.appendChild(cancelBtn);
-
-    root.addEventListener('click', (e) => {
-      if (e.target === root) {
-        destroyOverlay(root);
-        resolve('cancel');
-      }
-    });
-
-    loadStripe();
-    startShopping();
   });
+}
+
+interface FundingModalContext {
+  /**
+   * The modal root div element returned by overlayRoot
+   */
+  root: HTMLDivElement;
+  /**
+   * `actionDescription` rendered as HTML string, or empty string if none provided
+   */
+  desc: string
+  /**
+   * body div returned by renderCard
+   */
+  body: HTMLDivElement
+  /**
+   * `#funding-content` div within `body`. Use `setContent` to set its innerHTML.
+   */
+  content: HTMLDivElement;
+  /**
+   * stripe payment object valid after calling loadStripe and waiting on its promise.
+   */
+  stripe: any;
+  /**
+   * stripe elements object valid after calling loadStripe and waiting on its promise.
+   */
+  elements: any;
+  /**
+   * Set the innerHTML of the div with id "funding-content"
+   * @param html
+   */
+  setContent: (html: string) => void;
+  /**
+   * Result of starting a shopping session with the Satoshi Shop
+   */
+  ssr: StartShoppingResult | null;
+  /**
+   * reference string for the current purchase being made, if there is one.
+   */
+  currentReference: string;
+  /**
+   * How many more satoshis are still needed to retry the action.
+   *
+   * Will be less than or equal to zero if retry is now possible.
+   */
+  needed: number
+
+  /**
+   * Cancel button element added to `.bgo-actions` element under `root`.
+   * It's label is set to `opts.cancelText`.
+   */
+  cancelBtn: HTMLButtonElement;
+  /**
+   * Function to call to cancel the modal. Action will not be retried.
+   */
+  cancel: () => void
+  /**
+   * Function to call to dismiss the modal and retry the action.
+   */
+  retry: () => void
+  /**
+   * Function to delay for a short time for the user to read messages.
+   * Must be awaited.
+   */
+  delay: () => Promise<void>
+  /**
+   * Buy options for the user to choose from. 
+   */
+  buyOptions: Array<{ usd: number; sats: number }>;
 }

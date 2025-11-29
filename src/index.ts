@@ -80,7 +80,6 @@ const ERR = {
 
 const NO_WALLET_MESSAGE_PATTERN =
   /no wallet(?: available| detected| found)?(?: over any communication substrate)?\.?.*install.*wallet/i;
-const INSUFFICIENT_FUNDS_MESSAGE_PATTERN = /insufficient\s+funds/i;
 
 function getErrorMessage(error: unknown): string {
   if (
@@ -232,7 +231,7 @@ const DEFAULT_FUNDING: Required<FundingModalOptions> = {
   buySatsText: 'Buy Sats',
   retryText: 'Retry',
   cancelText: 'Cancel Action',
-  source: 'external',
+  source: 'satoshiShopClient',
   buySatsUrl: 'https://satoshis.babbage.systems',
   satoshiShopUrl: 'https://satoshi-shop.babbage.systems',
   satoshiShopPubKey: 'pk_live_51KT9tpEUx5UhTr4kDuPQBpP5Sy8G5Xd4rsqWTQLVsXAeQGGrKhYZt8JgGCGSgi1NHnOWbxJNfCoMVh3a8F9iCYXf00U0lbWdDC',
