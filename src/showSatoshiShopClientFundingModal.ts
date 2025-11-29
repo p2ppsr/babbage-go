@@ -273,93 +273,69 @@ export async function showFundingModal(
         ctx.currentReference = init.reference;
 
         const cardEl = ctx.content.querySelector<HTMLElement>('#card-element')!;
-        cardEl.style.display = 'block';
-        statusEl.textContent = 'Enter card details above.';
-
-        // --- NEW: Use separate elements so postal code is always visible ---
-        const cardNumber = ctx.elements.create('cardNumber', {
-          style: { base: { fontSize: '16px', lineHeight: '1.5' } }
-        });
-        const cardExpiry = ctx.elements.create('cardExpiry', {
-          style: { base: { fontSize: '16px', lineHeight: '1.5' } }
-        });
-        const cardCvc = ctx.elements.create('cardCvc', {
-          style: { base: { fontSize: '16px', lineHeight: '1.5' } }
-        });
-        const postalCode = ctx.elements.create('postalCode', {
-          style: { base: { fontSize: '16px', lineHeight: '1.5' } }
-        });
-
-        // Clear previous mounts
         const inputContainer = ctx.content.querySelector('#card-input')!;
         inputContainer.innerHTML = '';
 
-        cardNumber.mount(inputContainer.appendChild(document.createElement('div')));
-        cardExpiry.mount(inputContainer.appendChild(document.createElement('div')));
-        cardCvc.mount(inputContainer.appendChild(document.createElement('div')));
-        postalCode.mount(inputContainer.appendChild(document.createElement('div')));
+        cardEl.style.display = 'block';
+        statusEl.textContent = 'Enter card details above.';
+
+        const style = { base: { fontSize: '16px', lineHeight: '1.5' } }
+        const elts: Record<string, { key: string; name: string; element: any; div: HTMLDivElement, complete: boolean, empty: boolean, error?: any }> = {};
+
+        const updateButton = () => {
+          const allComplete = Object.values(elts).every((s) => s.complete);
+          submitBtn.disabled = !allComplete;
+        };
+
+        const handleStripeChange = (event: any, key: string) => {
+          const elt = elts[key]!;
+          elt.complete = !!event.complete
+          elt.empty = !!event.empty
+          elt.error = event.error;
+          if (event.error) {
+            cardErrorsEl.textContent = event.error.message;
+          } else {
+            cardErrorsEl.textContent = '';
+          }
+          updateButton();
+        };
+
+        for (const { key, name } of [
+          { key: 'cardNumber', name: 'card number' },
+          { key: 'cardExpiry', name: 'expiration date' },
+          { key: 'cardCvc', name: 'security code' },
+          { key: 'postalCode', name: 'postal code' },
+        ]) {
+          const element = ctx.elements.create(key, { style })
+          const div = document.createElement('div');
+          inputContainer.appendChild(div);
+          element.mount(div);
+          element.on('change', (event: any) => handleStripeChange(event, key));
+          elts[key] = { key, name, element, div, complete: false, empty: true, error: undefined };
+        }
 
         const submitBtn = document.createElement('button');
         submitBtn.id = 'submit-payment';
-        submitBtn.textContent = `Pay $${usd.toFixed(2)}`;
+        submitBtn.textContent = `Pay $${usd.toFixed(0)}`;
         submitBtn.disabled = true;
         submitBtn.style.cssText = 'margin-top:16px;padding:12px 20px;background:#635BFF;color:white;border:none;border-radius:8px;width:100%;font-size:16px;cursor:pointer;';
         inputContainer.after(submitBtn);
 
-        const updatePayButton = () => {
-          const allComplete =
-            cardNumber._complete &&
-            cardExpiry._complete &&
-            cardCvc._complete &&
-            postalCode._complete;
-          submitBtn.disabled = !allComplete;
-        };
-
-        cardNumber.on('change', updatePayButton);
-        cardExpiry.on('change', updatePayButton);
-        cardCvc.on('change', updatePayButton);
-        postalCode.on('change', updatePayButton);
-        updatePayButton(); // initial state
-
-        // Real-time validation
-        [cardNumber, cardExpiry, cardCvc, postalCode].forEach(el => {
-          el.on('change', (event: any) => {
-            if (event.error) {
-              cardErrorsEl.textContent = event.error.message;
-            } else if (!event.complete) {
-              // Optional: show incomplete hint
-            } else {
-              cardErrorsEl.textContent = '';
-            }
-          });
-        });
-
-        // Enable button only when all fields are complete
-        const updateButton = () => {
-          const complete = cardNumber._complete && cardExpiry._complete && cardCvc._complete && postalCode._complete;
-          submitBtn.disabled = !complete;
-        };
-        [cardNumber, cardExpiry, cardCvc, postalCode].forEach(el => el.on('change', updateButton));
+        updateButton();
 
         submitBtn.onclick = async () => {
           submitBtn.disabled = true;
           submitBtn.textContent = 'Processing…';
           statusEl.textContent = 'Confirming with your bank…';
 
-          const fields = [
-            { element: cardNumber, name: 'card number' },
-            { element: cardExpiry, name: 'expiration date' },
-            { element: cardCvc, name: 'security code' },
-            { element: postalCode, name: 'postal code' }
-          ];
-
           let hasError = false;
-          for (const field of fields) {
-            if (field.element._empty) {
-              cardErrorsEl.textContent = `Your ${field.name} is incomplete.`;
+          for (const key of ['cardNumber', 'cardExpiry', 'cardCvc', 'postalCode']) {
+            const elt = elts[key];
+            if (elt.empty) {
+              cardErrorsEl.textContent = `Your ${elt.name} is incomplete.`;
               hasError = true;
-            } else if (field.element._invalid) {
-              cardErrorsEl.textContent = field.element._error?.message || `Your ${field.name} is invalid.`;
+            } else if (elt.error) {
+              cardErrorsEl.textContent = elt.error.message || `Your ${elt.name} is invalid.`;
               hasError = true;
             }
           }
@@ -376,9 +352,9 @@ export async function showFundingModal(
 
           const { error, paymentIntent } = await ctx.stripe.confirmCardPayment(init.clientSecret, {
             payment_method: {
-              card: cardNumber,
+              card: elts['cardNumber'].element,
               billing_details: {
-                address: { postal_code: (postalCode as any).getValue?.() || '' }
+                address: { postal_code: elts['postalCode'].element.value }
               }
             }
           });
