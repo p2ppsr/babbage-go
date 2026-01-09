@@ -634,14 +634,28 @@ function showWalletUnavailableModal(
   mount?: HTMLElement | null
 ) {
   if (!IN_BROWSER) return;
+  const isAndroid = /Android/i.test(navigator.userAgent);
   const root = overlayRoot(mount);
   const link = document.createElement('a');
   link.className = 'bgo-link';
-  link.href = `${opts.ctaHref}?app=${encodeURIComponent(location.hostname)}`;
+
+  if (isAndroid) {
+    const PLAY_STORE_BASE =
+      'https://play.google.com/store/apps/details?id=app.metanet.explorer';
+    const targetUrl = location.href;
+    const referrerPayload = encodeURIComponent(`target=${targetUrl}`);
+    link.href = `${PLAY_STORE_BASE}&referrer=${referrerPayload}`;
+  } else {
+    link.href = `${opts.ctaHref}?app=${encodeURIComponent(location.hostname)}`;
+  }
   link.target = '_blank';
   link.rel = 'noopener noreferrer';
-  link.textContent = opts.ctaText;
-  renderCard(root, opts.title, `<p>${opts.message}</p>`, [link]);
+
+  const title = isAndroid ? 'ANDROID PLACEHOLDER TITLE' : opts.title;
+  const message = isAndroid ? 'ANDROID PLACEHOLDER MESSAGE' : opts.message;
+
+  link.textContent = isAndroid ? 'ANDROID PLACEHOLDER CTA' : opts.ctaText;
+  renderCard(root, title, `<p>${message}</p>`, [link]);
 }
 
 export function escapeHtml(s: string) {
