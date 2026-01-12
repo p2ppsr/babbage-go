@@ -643,8 +643,17 @@ function showWalletUnavailableModal(
     const PLAY_STORE_BASE =
       'https://play.google.com/store/apps/details?id=app.metanet.explorer';
     const targetUrl = location.href;
-    const referrerPayload = encodeURIComponent(`target=${targetUrl}`);
-    link.href = `${PLAY_STORE_BASE}&referrer=${referrerPayload}`;
+
+    const targetParam = encodeURIComponent(targetUrl);
+    const referrerPayload = encodeURIComponent(`url=${targetUrl}`);
+    const playStoreFallback = `${PLAY_STORE_BASE}&referrer=${referrerPayload}`;
+    const encodedFallback = encodeURIComponent(playStoreFallback);
+
+    link.href =
+      `intent://browser?url=${targetParam}` +
+      `#Intent;scheme=metanet;package=app.metanet.explorer;` +
+      `action=android.intent.action.VIEW;` +
+      `S.browser_fallback_url=${encodedFallback};end;`;
   } else {
     link.href = `${opts.ctaHref}?app=${encodeURIComponent(location.hostname)}`;
   }
