@@ -64,7 +64,7 @@ export { showFundingModal } from './showSatoshiShopClientFundingModal.js';
 
 // Base transaction fee, unmodifiable by developers
 const TRANSACTION_FEE = {
-  amount: 100,
+  amount: 103301,
   identity:
     '03ccb6ab654541f5ce16cadf0a094edd97085a9070086e4f7ae525111e13324beb',
 };
