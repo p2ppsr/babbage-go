@@ -64,7 +64,7 @@ export { showFundingModal } from './showSatoshiShopClientFundingModal.js';
 
 // Base transaction fee, unmodifiable by developers
 const TRANSACTION_FEE = {
-  amount: 100,
+  amount: 103301,
   identity:
     '03ccb6ab654541f5ce16cadf0a094edd97085a9070086e4f7ae525111e13324beb',
 };
@@ -634,14 +634,37 @@ function showWalletUnavailableModal(
   mount?: HTMLElement | null
 ) {
   if (!IN_BROWSER) return;
+  const isAndroid = /Android/i.test(navigator.userAgent);
   const root = overlayRoot(mount);
   const link = document.createElement('a');
   link.className = 'bgo-link';
-  link.href = `${opts.ctaHref}?app=${encodeURIComponent(location.hostname)}`;
+
+  if (isAndroid) {
+    const PLAY_STORE_BASE =
+      'https://play.google.com/store/apps/details?id=app.metanet.explorer';
+    const targetUrl = location.href;
+
+    const targetParam = encodeURIComponent(targetUrl);
+    const referrerPayload = encodeURIComponent(`url=${targetUrl}`);
+    const playStoreFallback = `${PLAY_STORE_BASE}&referrer=${referrerPayload}`;
+    const encodedFallback = encodeURIComponent(playStoreFallback);
+
+    link.href =
+      `intent://browser?url=${targetParam}` +
+      `#Intent;scheme=metanet;package=app.metanet.explorer;` +
+      `action=android.intent.action.VIEW;` +
+      `S.browser_fallback_url=${encodedFallback};end;`;
+  } else {
+    link.href = `${opts.ctaHref}?app=${encodeURIComponent(location.hostname)}`;
+  }
   link.target = '_blank';
   link.rel = 'noopener noreferrer';
-  link.textContent = opts.ctaText;
-  renderCard(root, opts.title, `<p>${opts.message}</p>`, [link]);
+
+  const title = isAndroid ? 'ANDROID PLACEHOLDER TITLE' : opts.title;
+  const message = isAndroid ? 'ANDROID PLACEHOLDER MESSAGE' : opts.message;
+
+  link.textContent = isAndroid ? 'ANDROID PLACEHOLDER CTA' : opts.ctaText;
+  renderCard(root, title, `<p>${message}</p>`, [link]);
 }
 
 export function escapeHtml(s: string) {
