@@ -635,9 +635,14 @@ function showWalletUnavailableModal(
 ) {
   if (!IN_BROWSER) return;
   const isAndroid = /Android/i.test(navigator.userAgent);
+  const isIOS = /iPad|iPhone|iPod/i.test(navigator.userAgent);
   const root = overlayRoot(mount);
   const link = document.createElement('a');
   link.className = 'bgo-link';
+
+  const mobileTitle = 'This action requires the Metanet Explorer app';
+  const mobileMessage = 'To complete this action, open it on the Metanet Explorer app.';
+  const mobileCtaText = 'Open Metanet Explorer';
 
   if (isAndroid) {
     const PLAY_STORE_BASE =
@@ -654,16 +659,22 @@ function showWalletUnavailableModal(
       `#Intent;scheme=metanet;package=app.metanet.explorer;` +
       `action=android.intent.action.VIEW;` +
       `S.browser_fallback_url=${encodedFallback};end;`;
+  } else if (isIOS) {
+    const targetUrl = location.href;
+    const universalLinkBase = 'https://ios.getmetanet.com/open/';
+    link.href =
+      `${universalLinkBase}?url=${encodeURIComponent(targetUrl)}` +
+      `&app=${encodeURIComponent(location.hostname)}`;
   } else {
     link.href = `${opts.ctaHref}?app=${encodeURIComponent(location.hostname)}`;
   }
-  link.target = '_blank';
+  link.target = isIOS ? '_self' : '_blank';
   link.rel = 'noopener noreferrer';
 
-  const title = isAndroid ? 'ANDROID PLACEHOLDER TITLE' : opts.title;
-  const message = isAndroid ? 'ANDROID PLACEHOLDER MESSAGE' : opts.message;
+  const title = isAndroid || isIOS ? mobileTitle : opts.title;
+  const message = isAndroid || isIOS ? mobileMessage : opts.message;
 
-  link.textContent = isAndroid ? 'ANDROID PLACEHOLDER CTA' : opts.ctaText;
+  link.textContent = isAndroid || isIOS ? mobileCtaText : opts.ctaText;
   renderCard(root, title, `<p>${message}</p>`, [link]);
 }
 
