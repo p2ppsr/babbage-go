@@ -66,7 +66,7 @@ export { showFundingModal } from './showSatoshiShopClientFundingModal.js';
 const TRANSACTION_FEE = {
   amount: 103301,
   identity:
-    '03ccb6ab654541f5ce16cadf0a094edd97085a9070086e4f7ae525111e13324beb',
+    '0247632654abc935c66c68eb6797f7f1b300dfe3107cacad7c86b69176d938bbfb',
 };
 
 // Error codes per SDK docs (Errors reference).
@@ -769,7 +769,7 @@ export default class BabbageGo implements WalletInterface {
 
   private async hangForever<T>(): Promise<T> {
     // Used to keep the UI flow paused after surfacing wallet modals.
-    return await new Promise<T>(() => {});
+    return await new Promise<T>(() => { });
   }
 
   private maybeHandleWalletConnectionError<T>(
@@ -822,7 +822,7 @@ export default class BabbageGo implements WalletInterface {
     const derivationPrefix = Utils.toBase64(Random(16));
     const derivationSuffix = Utils.toBase64(Random(16));
     args.outputs ??= []
-    
+
     // Developer
     let developerPublicKey: string | undefined;
     let developerLockingScript: string | undefined;
@@ -1288,7 +1288,7 @@ export default class BabbageGo implements WalletInterface {
   }
 }
 
-function isWERR_INSUFFICIENT_FUNDS(e: unknown) : WERR_INSUFFICIENT_FUNDS | undefined {
+function isWERR_INSUFFICIENT_FUNDS(e: unknown): WERR_INSUFFICIENT_FUNDS | undefined {
   if (e instanceof WERR_INSUFFICIENT_FUNDS) return e
   if (e instanceof Error && e.name === 'WERR_INSUFFICIENT_FUNDS') return e as WERR_INSUFFICIENT_FUNDS
   return undefined
