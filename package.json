@@ -45,7 +45,7 @@
     "typescript": "^5.6.3"
   },
   "dependencies": {
-    "@bsv/message-box-client": "^1.4.3",
-    "satoshi-shop-client": "^2.0.4"
+    "@bsv/message-box-client": "^2.0.2",
+    "satoshi-shop-client": "^2.0.6"
   }
 }
