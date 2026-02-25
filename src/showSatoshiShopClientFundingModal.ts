@@ -20,7 +20,7 @@ export async function showFundingModal(
 
   if (!IN_BROWSER) return 'cancel';
 
-  const shopClient = new SatoshiShopClient(wallet, opts.satoshiShopUrl);
+  const shopClient = new SatoshiShopClient(wallet as any, opts.satoshiShopUrl);
 
   return new Promise<'cancel' | 'retry'>((resolve) => {
 
@@ -28,7 +28,7 @@ export async function showFundingModal(
 
     shop();
 
-    function setupContext() : FundingModalContext {
+    function setupContext(): FundingModalContext {
       const root = overlayRoot(mount);
       const cancel = () => { destroyOverlay(root); resolve('cancel'); }
       const retry = () => { destroyOverlay(root); resolve('retry'); }
@@ -83,7 +83,7 @@ export async function showFundingModal(
       return ctx;
     }
 
-    async function shop() : Promise<void> {
+    async function shop(): Promise<void> {
       const loadStripePromise = loadStripe();
 
       try {
@@ -103,7 +103,7 @@ export async function showFundingModal(
 
         // We will be shopping, make sure stripe is loaded and valid.
         await loadStripePromise;
-        
+
         renderAmountSelector();
 
       } catch (e: any) {
@@ -113,7 +113,7 @@ export async function showFundingModal(
       }
     };
 
-    async function loadStripe() : Promise<void> {
+    async function loadStripe(): Promise<void> {
       const setStripe = () => {
         ctx.stripe = (window as any).Stripe(opts.satoshiShopPubKey);
         ctx.elements = ctx.stripe.elements();
@@ -136,7 +136,7 @@ export async function showFundingModal(
       });
     };
 
-    async function processPendingTxs() : Promise<void> {
+    async function processPendingTxs(): Promise<void> {
       if (!ctx.ssr?.pendingTxs?.length) return;
 
       ctx.setContent('<p>Processing previous purchases…</p>');
@@ -159,7 +159,7 @@ export async function showFundingModal(
       }
 
       if (ctx.needed <= 0) {
-        ctx.setContent(ctx.content.innerHTML +`<p style="color:#4caf50">The action will be retried in a moment. </p>`);
+        ctx.setContent(ctx.content.innerHTML + `<p style="color:#4caf50">The action will be retried in a moment. </p>`);
       }
 
       // If there were pending transactions, always pause briefly to let user read messages before replacing content.
@@ -170,7 +170,7 @@ export async function showFundingModal(
       }
     };
 
-    async function determineBuyOptions() : Promise<void> {
+    async function determineBuyOptions(): Promise<void> {
       if (!ctx.ssr) return;
 
       const rate = ctx.ssr.satoshisPerUSD;
@@ -199,7 +199,7 @@ export async function showFundingModal(
       }
     }
 
-    async function renderAmountSelector() : Promise<void> {
+    async function renderAmountSelector(): Promise<void> {
       const validMinutes = Math.floor((ctx.ssr!.quoteValidUntil!.getTime() - Date.now()) / 60000);
       ctx.setContent(`
         <div style="text-align:center;">
@@ -258,7 +258,7 @@ export async function showFundingModal(
       initiatePurchase(sats, usd);
     }
 
-    async function initiatePurchase(sats: number, usd: number) : Promise<void> {
+    async function initiatePurchase(sats: number, usd: number): Promise<void> {
       const statusEl = ctx.content.querySelector('#payment-status')!;
       const cardErrorsEl = ctx.content.querySelector('#card-errors')!;
       statusEl.textContent = 'Preparing payment…';
@@ -384,7 +384,7 @@ export async function showFundingModal(
       }
     };
 
-    async function finalizePurchase(reference: string) : Promise<void> {
+    async function finalizePurchase(reference: string): Promise<void> {
       const statusEl = ctx.content.querySelector('#payment-status')!;
 
       const poll = async () => {
