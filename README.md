@@ -39,6 +39,18 @@ Our new Pulse Bloom system gives every interaction an immediate tone without for
 - Drop-in brand CSS with `design.customCss` (legacy `styles` still works and is merged automatically).
 - Modal copy for wallet-unavailable + funding flows remains configurable via their respective option blocks.
 
+## Wallet unavailable handoff
+
+When a wallet is missing, the default CTA now points to
+`https://getmetanet.com/open`. Babbage Go includes the current page URL, app
+host, page title, and `source=babbage-go` so GetMetanet can show a welcoming
+handoff and open the exact page in Metanet Explorer when it is installed.
+
+Existing `walletUnavailable.ctaHref` overrides still work. The library appends
+handoff parameters with `URLSearchParams`, preserving any existing query string.
+On Android, the CTA still uses an app intent first and falls back to the web
+handoff when Metanet Explorer is not installed.
+
 ## Examples
 
 ### 1. Aurora Pulse onboarding

@@ -106,7 +106,7 @@ export interface WalletUnavailableModalOptions {
   title?: string;
   message?: string;
   ctaText?: string;
-  ctaHref?: string; // default https://GetMetanet.com
+  ctaHref?: string; // default https://getmetanet.com/open
 }
 
 export interface FundingModalOptions {
@@ -220,7 +220,7 @@ const DEFAULT_WALLET_UNAVAILABLE: Required<WalletUnavailableModalOptions> = {
   message:
     'Connect a BRC-100 compatible wallet (Metanet). Install one, then return to retry.',
   ctaText: 'Get a Wallet',
-  ctaHref: 'https://GetMetanet.com',
+  ctaHref: 'https://getmetanet.com/open',
 };
 
 const DEFAULT_FUNDING: Required<FundingModalOptions> = {
@@ -629,6 +629,78 @@ export function renderCard(
   return { body: b };
 }
 
+type WalletUnavailableHandoff = {
+  webUrl: string;
+  schemeUrl: string;
+};
+
+function safeCurrentPageUrl(): string | undefined {
+  if (!IN_BROWSER) return undefined;
+  try {
+    const parsed = new URL(window.location.href);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:'
+      ? parsed.href
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function safeCurrentHost(): string | undefined {
+  if (!IN_BROWSER) return undefined;
+  const hostname = window.location.hostname || '';
+  return hostname.length > 0 ? hostname : undefined;
+}
+
+function safeCurrentTitle(): string | undefined {
+  if (!IN_BROWSER) return undefined;
+  const title = (document.title || '').trim().replace(/\s+/g, ' ');
+  if (!title) return undefined;
+  return title.length > 120 ? `${title.slice(0, 117)}...` : title;
+}
+
+function appendHandoffParams(baseHref: string, includeWelcome: boolean): string {
+  const targetUrl = safeCurrentPageUrl();
+  const app = safeCurrentHost();
+  const title = safeCurrentTitle();
+
+  try {
+    const base = new URL(baseHref, IN_BROWSER ? window.location.href : undefined);
+    if (targetUrl) base.searchParams.set('url', targetUrl);
+    if (app) base.searchParams.set('app', app);
+    if (title) base.searchParams.set('title', title);
+    base.searchParams.set('source', 'babbage-go');
+    if (includeWelcome) base.searchParams.set('welcome', '1');
+    return base.href;
+  } catch {
+    const params = new URLSearchParams();
+    if (targetUrl) params.set('url', targetUrl);
+    if (app) params.set('app', app);
+    if (title) params.set('title', title);
+    params.set('source', 'babbage-go');
+    if (includeWelcome) params.set('welcome', '1');
+    const joiner = baseHref.includes('?') ? '&' : '?';
+    return `${baseHref}${joiner}${params.toString()}`;
+  }
+}
+
+function buildWalletUnavailableHandoff(ctaHref: string): WalletUnavailableHandoff {
+  return {
+    webUrl: appendHandoffParams(ctaHref, false),
+    schemeUrl: appendHandoffParams('metanet://browser', true),
+  };
+}
+
+function buildAndroidIntentUrl(schemeUrl: string, fallbackUrl: string): string {
+  const query = schemeUrl.includes('?') ? schemeUrl.slice(schemeUrl.indexOf('?') + 1) : '';
+  return (
+    `intent://browser${query ? `?${query}` : ''}` +
+    '#Intent;scheme=metanet;package=app.metanet.explorer;' +
+    'action=android.intent.action.VIEW;' +
+    `S.browser_fallback_url=${encodeURIComponent(fallbackUrl)};end;`
+  );
+}
+
 function showWalletUnavailableModal(
   opts: Required<WalletUnavailableModalOptions>,
   mount?: HTMLElement | null
@@ -639,43 +711,29 @@ function showWalletUnavailableModal(
   const root = overlayRoot(mount);
   const link = document.createElement('a');
   link.className = 'bgo-link';
+  const handoff = buildWalletUnavailableHandoff(opts.ctaHref);
 
   const mobileTitle = 'This action requires the Metanet Explorer app';
   const mobileMessage = 'To complete this action, open it on the Metanet Explorer app.';
   const mobileCtaText = 'Open Metanet Explorer';
 
   if (isAndroid) {
-    const PLAY_STORE_BASE =
-      'https://play.google.com/store/apps/details?id=app.metanet.explorer';
-    const targetUrl = location.href;
-
-    const targetParam = encodeURIComponent(targetUrl);
-    const referrerPayload = encodeURIComponent(`url=${targetUrl}`);
-    const playStoreFallback = `${PLAY_STORE_BASE}&referrer=${referrerPayload}`;
-    const encodedFallback = encodeURIComponent(playStoreFallback);
-
-    link.href =
-      `intent://browser?url=${targetParam}` +
-      `#Intent;scheme=metanet;package=app.metanet.explorer;` +
-      `action=android.intent.action.VIEW;` +
-      `S.browser_fallback_url=${encodedFallback};end;`;
+    link.href = buildAndroidIntentUrl(handoff.schemeUrl, handoff.webUrl);
+    link.target = '_self';
   } else if (isIOS) {
-    const targetUrl = location.href;
-    const universalLinkBase = 'https://ios.getmetanet.com/open/';
-    link.href =
-      `${universalLinkBase}?url=${encodeURIComponent(targetUrl)}` +
-      `&app=${encodeURIComponent(location.hostname)}`;
+    link.href = handoff.webUrl;
+    link.target = '_self';
   } else {
-    link.href = `${opts.ctaHref}?app=${encodeURIComponent(location.hostname)}`;
+    link.href = handoff.webUrl;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
   }
-  link.target = isIOS ? '_self' : '_blank';
-  link.rel = 'noopener noreferrer';
 
   const title = isAndroid || isIOS ? mobileTitle : opts.title;
   const message = isAndroid || isIOS ? mobileMessage : opts.message;
 
   link.textContent = isAndroid || isIOS ? mobileCtaText : opts.ctaText;
-  renderCard(root, title, `<p>${message}</p>`, [link]);
+  renderCard(root, title, `<p>${escapeHtml(message)}</p>`, [link]);
 }
 
 export function escapeHtml(s: string) {
@@ -1293,4 +1351,3 @@ function isWERR_INSUFFICIENT_FUNDS(e: unknown): WERR_INSUFFICIENT_FUNDS | undefi
   if (e instanceof Error && e.name === 'WERR_INSUFFICIENT_FUNDS') return e as WERR_INSUFFICIENT_FUNDS
   return undefined
 }
-
