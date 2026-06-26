@@ -15,6 +15,10 @@
   "author": "Project Babbage",
   "type": "module",
   "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/p2ppsr/babbage-go.git"
+  },
   "main": "dist/cjs/index.cjs",
   "module": "dist/esm/index.js",
   "types": "dist/types/index.d.ts",
@@ -30,6 +34,9 @@
     "README.md",
     "LICENSE.txt"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "clean": "rm -rf dist",
     "build:esm": "tsc -p tsconfig.esm.json",
