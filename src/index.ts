@@ -62,8 +62,8 @@ import { showFundingModal as showSatoshiShopClientFundingModal } from './showSat
 import { showExternalFundingModal } from './showExternalFundingModal.js';
 export { showFundingModal } from './showSatoshiShopClientFundingModal.js';
 
-// Base transaction fee, unmodifiable by developers
-const TRANSACTION_FEE = {
+// Default platform contribution that sustains the Metanet developer ecosystem.
+const METANET_PLATFORM_FEE = {
   amount: 103301,
   identity:
     '0247632654abc935c66c68eb6797f7f1b300dfe3107cacad7c86b69176d938bbfb',
@@ -145,6 +145,15 @@ export interface MonetizationOptions {
   developerFeeSats?: number | undefined;
 }
 
+export interface AdvancedOptions {
+  /**
+   * Keep this enabled to support the developers who maintain Metanet's shared
+   * platform and tooling. Defaults to true. Set to false only when your app
+   * deliberately chooses not to include the platform fee in createAction calls.
+   */
+  supportMetanetDevelopers?: boolean;
+}
+
 export type ButtonShape = 'soft' | 'pill' | 'sharp';
 
 export type BabbageGoStylePreset =
@@ -194,6 +203,7 @@ export interface BabbageGoOptions {
   walletUnavailable?: WalletUnavailableModalOptions;
   funding?: FundingModalOptions;
   monetization?: MonetizationOptions;
+  advanced?: AdvancedOptions;
 }
 
 interface ResolvedDesignOptions {
@@ -212,6 +222,7 @@ interface ResolvedOptions {
   walletUnavailable: Required<WalletUnavailableModalOptions>;
   funding: Required<FundingModalOptions>;
   monetization: MonetizationOptions | undefined;
+  advanced: Required<AdvancedOptions>;
   design: ResolvedDesignOptions;
 }
 
@@ -518,6 +529,9 @@ const DEFAULTS: ResolvedOptions = {
   walletUnavailable: DEFAULT_WALLET_UNAVAILABLE,
   funding: DEFAULT_FUNDING,
   monetization: undefined,
+  advanced: {
+    supportMetanetDevelopers: true,
+  },
   design: resolveDesignOptions(),
 };
 
@@ -566,6 +580,11 @@ function resolveOptions(options?: BabbageGoOptions): ResolvedOptions {
     ),
     funding: resolveFundingOptions(options?.funding),
     monetization: options?.monetization ?? DEFAULTS.monetization,
+    advanced: {
+      supportMetanetDevelopers:
+        options?.advanced?.supportMetanetDevelopers ??
+        DEFAULTS.advanced.supportMetanetDevelopers,
+    },
     design: resolveDesignOptions(options?.design, styles),
   };
 }
@@ -869,7 +888,7 @@ export default class BabbageGo implements WalletInterface {
         amount: number;
         identity: string;
       };
-      base: {
+      platform?: {
         amount: number;
         identity: string;
       };
@@ -879,7 +898,10 @@ export default class BabbageGo implements WalletInterface {
   ): Promise<CreateActionResult> {
     const derivationPrefix = Utils.toBase64(Random(16));
     const derivationSuffix = Utils.toBase64(Random(16));
-    args.outputs ??= []
+    const hydratedArgs: CreateActionArgs = {
+      ...args,
+      outputs: [...(args.outputs ?? [])],
+    };
 
     // Developer
     let developerPublicKey: string | undefined;
@@ -896,7 +918,7 @@ export default class BabbageGo implements WalletInterface {
       developerLockingScript = new P2PKH()
         .lock(PublicKey.fromString(developerPublicKey).toAddress())
         .toHex();
-      args.outputs.push({
+      hydratedArgs.outputs!.push({
         satoshis: recipients.developer.amount,
         lockingScript: developerLockingScript,
         customInstructions: JSON.stringify({
@@ -908,38 +930,43 @@ export default class BabbageGo implements WalletInterface {
       });
     }
 
-    // Base
-    const { publicKey: basePublicKey } = await walletClient.getPublicKey(
-      {
-        protocolID: [2, '3241645161d8'],
-        keyID: `${derivationPrefix} ${derivationSuffix}`,
-        counterparty: recipients.base.identity,
-      },
-      origin
-    );
-    const baseLockingScript = new P2PKH()
-      .lock(PublicKey.fromString(basePublicKey).toAddress())
-      .toHex();
+    // Metanet platform support
+    let platformLockingScript: string | undefined;
+    if (recipients.platform != null) {
+      const { publicKey: platformPublicKey } = await walletClient.getPublicKey(
+        {
+          protocolID: [2, '3241645161d8'],
+          keyID: `${derivationPrefix} ${derivationSuffix}`,
+          counterparty: recipients.platform.identity,
+        },
+        origin
+      );
+      platformLockingScript = new P2PKH()
+        .lock(PublicKey.fromString(platformPublicKey).toAddress())
+        .toHex();
 
-    args.outputs.push({
-      satoshis: recipients.base.amount,
-      lockingScript: baseLockingScript,
-      customInstructions: JSON.stringify({
-        derivationPrefix,
-        derivationSuffix,
-        payee: recipients.base,
-      }),
-      outputDescription: 'Babbage Go',
-    });
+      hydratedArgs.outputs!.push({
+        satoshis: recipients.platform.amount,
+        lockingScript: platformLockingScript,
+        customInstructions: JSON.stringify({
+          derivationPrefix,
+          derivationSuffix,
+          payee: recipients.platform,
+        }),
+        outputDescription: 'Support Metanet developers',
+      });
+    }
 
-    const action = await walletClient.createAction(args);
+    const action = await walletClient.createAction(hydratedArgs, origin);
     return new Promise(async r => {
       r(action);
       if (typeof action.signableTransaction === 'object') {
-        this.pendingScripts[baseLockingScript] = {
-          derivationPrefix,
-          derivationSuffix,
-          identity: recipients.base.identity
+        if (typeof platformLockingScript === 'string') {
+          this.pendingScripts[platformLockingScript] = {
+            derivationPrefix,
+            derivationSuffix,
+            identity: recipients.platform!.identity
+          }
         }
         if (typeof developerLockingScript === 'string') {
           this.pendingScripts[developerLockingScript] = {
@@ -978,7 +1005,7 @@ export default class BabbageGo implements WalletInterface {
             messageBox: STANDARD_PAYMENT_MESSAGEBOX,
             body: JSON.stringify(paymentToken)
           });
-        } else if (outs[oi].lockingScript.toHex() === baseLockingScript) {
+        } else if (outs[oi].lockingScript.toHex() === platformLockingScript) {
           const paymentToken: PaymentToken = {
             customInstructions: {
               derivationPrefix,
@@ -989,7 +1016,7 @@ export default class BabbageGo implements WalletInterface {
             outputIndex: oi
           };
           mbc.sendMessage({
-            recipient: recipients.base.identity,
+            recipient: recipients.platform!.identity,
             messageBox: STANDARD_PAYMENT_MESSAGEBOX,
             body: JSON.stringify(paymentToken)
           });
@@ -1018,7 +1045,12 @@ export default class BabbageGo implements WalletInterface {
 
       const result = await this.createActionWithHydratedArgs(
         this.base,
-        { base: TRANSACTION_FEE, developer: monetization ?? undefined },
+        {
+          platform: this.options.advanced.supportMetanetDevelopers
+            ? METANET_PLATFORM_FEE
+            : undefined,
+          developer: monetization ?? undefined,
+        },
         args,
         origin
       );

@@ -22,6 +22,10 @@ await wallet.createAction({
 })
 ```
 
+By default, each `createAction` includes a 103,301-satoshi platform fee that
+supports the Metanet developers maintaining the shared ecosystem and tooling.
+Keeping this support enabled is strongly encouraged.
+
 ## Pulse Bloom design system
 
 Our new Pulse Bloom system gives every interaction an immediate tone without forcing you to hand-roll CSS. It blends glassy layers, tactile buttons, and emotional color grading while remaining fully overridable.
@@ -125,6 +129,24 @@ const wallet = new babbagego(undefined, {
   }
 })
 ```
+
+### Advanced: platform support policy
+
+The platform fee is enabled by default. Applications that deliberately choose
+not to support the Metanet developers can disable it through the advanced
+constructor settings; doing so removes the platform-fee output from
+`createAction` calls:
+
+```ts
+const wallet = new BabbageGo(undefined, {
+  advanced: {
+    supportMetanetDevelopers: false,
+  },
+})
+```
+
+This setting does not affect an application's separate `monetization`
+developer fee.
 
 ## License
 
