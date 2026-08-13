@@ -54,8 +54,7 @@ import {
   Base64String,
   AtomicBEEF,
   Random,
-  Utils,
-  WERR_INSUFFICIENT_FUNDS
+  Utils
 } from '@bsv/sdk';
 import { MessageBoxClient } from '@bsv/message-box-client';
 import { showFundingModal as showSatoshiShopClientFundingModal } from './showSatoshiShopClientFundingModal.js';
@@ -1378,8 +1377,17 @@ export default class BabbageGo implements WalletInterface {
   }
 }
 
-function isWERR_INSUFFICIENT_FUNDS(e: unknown): WERR_INSUFFICIENT_FUNDS | undefined {
-  if (e instanceof WERR_INSUFFICIENT_FUNDS) return e
-  if (e instanceof Error && e.name === 'WERR_INSUFFICIENT_FUNDS') return e as WERR_INSUFFICIENT_FUNDS
+type InsufficientFundsError = Error & {
+  moreSatoshisNeeded: number
+  totalSatoshisNeeded?: number
+}
+
+function isWERR_INSUFFICIENT_FUNDS(e: unknown): InsufficientFundsError | undefined {
+  if (
+    e instanceof Error &&
+    e.name === 'WERR_INSUFFICIENT_FUNDS' &&
+    'moreSatoshisNeeded' in e &&
+    typeof e.moreSatoshisNeeded === 'number'
+  ) return e as InsufficientFundsError
   return undefined
 }
