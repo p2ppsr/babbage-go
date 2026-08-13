@@ -1,6 +1,6 @@
 {
   "name": "@babbage/go",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "description": "A polished, production-minded BRC-100 WalletInterface wrapper with sleek funding & onboarding UX for the MetaNet/BRC-100 world.",
   "keywords": [
     "babbage",
@@ -56,6 +56,6 @@
   },
   "dependencies": {
     "@bsv/message-box-client": "^2.0.2",
-    "satoshi-shop-client": "^2.0.6"
+    "satoshi-shop-client": "^2.0.7"
   }
 }
