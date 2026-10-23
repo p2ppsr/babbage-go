@@ -151,3 +151,11 @@ developer fee.
 ## License
 
 [Open BSV © 2025 P2PPSR](./LICENSE.txt)
+
+
+## October2026 Node security tooling
+
+CI execution uses exact patched Node releases. The supported major matrix,
+where present, uses22.23.4,24.22.1 and26.12.1; EOL20 is removed from execution.
+Application dependency versions and public library compatibility contracts are
+unchanged.
